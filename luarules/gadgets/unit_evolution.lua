@@ -243,7 +243,7 @@ if gadgetHandler:IsSyncedCode() then
 				evolution_health_transfer =  udcp.evolution_health_transfer or "flat",
 
 				timeCreated = spGetGameSeconds(),
-				combatTimer = spGetGameSeconds(),
+				combatTimer = nil,
 				inCombat = false,
 			}
 		end
@@ -301,35 +301,67 @@ if gadgetHandler:IsSyncedCode() then
 		end
 	end
 
+	local function FillToCheckUnitIDs()
+		if lastCheckIndex <= nToCheckUnitIDs then
+			return
+		end
+
+		toCheckUnitIDs = {}
+		local i = 0
+		for unitID, evolution in pairs(evolutionMetaList) do
+			i =  i + 1
+			toCheckUnitIDs[i] = {
+				id = unitID,
+				timeCreated = evolution.timeCreated
+			}
+		end
+
+		table.sort(toCheckUnitIDs, function(a,b) return a.timeCreated < b.timeCreated end)
+
+		lastCheckIndex = 1
+		nToCheckUnitIDs = i
+
+		return nToCheckUnitIDs == 0
+	end
+
+	local function UnitsToBatchSizeInterpolation(value, minLoadUnits, maxLoadUnits, minLoadBatchSize, maxLoadBatchSize)
+		value = (value < minLoadUnits) and minLoadUnits or ((value > maxLoadUnits) and maxLoadUnits or value)
+  	local t = (value - minLoadUnits) / (maxLoadUnits - minLoadUnits)
+  	return minLoadBatchSize * ((maxLoadBatchSize / minLoadBatchSize) ^ (t^0.1))
+	end
+
+	local function IsInCombat(unitID, evolution, currentTime)
+		evolution.inCombat = false
+		if evolution.combatRadius and spGetUnitNearestEnemy(unitID, evolution.combatRadius) then
+			evolution.inCombat = true
+			evolution.combatTimer = currentTime
+			return true
+		elseif evolution.combatTimer ~= nil and (currentTime - evolution.combatTimer) <= 5 then
+			return true
+		end
+	end
 
 	function gadget:GameFrame(f)
 		if f % GAME_SPEED ~= 0 then
 			return
 		end
 
-		local currentTime =  spGetGameSeconds()
-		if ((TIMER_CHECK_FREQUENCY + lastTimerCheck) < f) then
-			lastTimerCheck = f
-			for unitID, _ in pairs(evolutionMetaList) do
-				local evolution = evolutionMetaList[unitID]
-				if (evolution.evolution_condition == "timer" and (currentTime-evolution.timeCreated) >= evolution.evolution_timer) or
-				   (evolution.evolution_condition == "timer_global" and currentTime >= evolution.evolution_timer) then
-					local enemyNearby = spGetUnitNearestEnemy(unitID, evolution.combatRadius)
-					local inCombat = false
-					if enemyNearby then
-						inCombat = true
-						evolution.combatTimer = currentTime
-					end
+		local checkCount = 0
+		local currentTime = spGetGameSeconds()
+		local evolutionsBatchSize = UnitsToBatchSizeInterpolation(#Spring.GetAllUnits(), 600, 4000, 200, 15)
 
-					if not inCombat and (currentTime-evolution.combatTimer) >= 5 then
+		while lastCheckIndex <= nToCheckUnitIDs and checkCount < evolutionsBatchSize do
+			local unitID = toCheckUnitIDs[lastCheckIndex].id
+
+			local evolution = evolutionMetaList[unitID]
+			if evolution then
+				if (evolution.evolution_condition == 'timer'
+					and (currentTime - evolution.timeCreated) >= evolution.evolution_timer) or
+						(evolution.evolution_condition == 'timer_global' and currentTime >= evolution.evolution_timer)
+					and not IsInCombat(unitID, evolution, currentTime) then
 						Evolve(unitID, evolution.evolution_target)
 					end
 				end
-			end
-		end
-
-		if ((POWER_CHECK_FREQUENCY + lastPowerCheck) < f) then
-			lastPowerCheck = f
 
 			for unitID, _ in pairs(evolutionMetaList) do
 				local teamID = spGetUnitTeam(unitID)
@@ -343,19 +375,18 @@ if gadgetHandler:IsSyncedCode() then
 						end
 					end
 				end
-				if transporterID then
-				elseif evolution.evolution_condition == "power" and highestTeamPower > evolution.evolution_power_threshold then
-					local enemyNearby = spGetUnitNearestEnemy(unitID, evolution.combatRadius)
-					local inCombat = false
-					if enemyNearby then
-						inCombat = true
-						evolution.combatTimer = currentTime
-					end
-					if not inCombat and (currentTime-evolution.combatTimer) >= 5 then
+
+				if evolution.evolution_condition == "power"
+					and not Spring.GetUnitTransporter(unitID)
+					and highestTeamPower > evolution.evolution_power_threshold
+					and not IsInCombat(unitID, evolution, currentTime) then
 						Evolve(unitID, evolution.evolution_target)
 					end
 				end
 			end
+
+			lastCheckIndex = lastCheckIndex + 1
+			checkCount = checkCount + 1
 		end
 	end
 
