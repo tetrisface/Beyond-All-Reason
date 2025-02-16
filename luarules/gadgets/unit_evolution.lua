@@ -17,6 +17,7 @@ if gadgetHandler:IsSyncedCode() then
 	local spCreateUnit            = Spring.CreateUnit
 	local spDestroyUnit           = Spring.DestroyUnit
 	local spGiveOrderToUnit       = Spring.GiveOrderToUnit
+	local spGiveOrderArrayToUnit  = Spring.GiveOrderArrayToUnit
 	local spSetUnitRulesParam     = Spring.SetUnitRulesParam
 	local spGetUnitPosition       = Spring.GetUnitPosition
 	local spGetUnitStates = Spring.GetUnitStates
@@ -164,32 +165,18 @@ if gadgetHandler:IsSyncedCode() then
 			announcementSize = evolution.evolution_announcement_size
 		end
 
-			spSetUnitRulesParam(unitID, "unit_evolved", newUnitID, PRIVATE)
+		spSetUnitRulesParam(unitID, "unit_evolved", newUnitID, PRIVATE)
 
-			SendToUnsynced("unit_evolve_finished", unitID, newUnitID, announcement,announcementSize)
-			if evolutionMetaList[unitID].evolution_health_transfer == "full" then
-			elseif evolutionMetaList[unitID].evolution_health_transfer == "percentage" then
-				local _, newUnitMaxHealth = spGetUnitHealth(newUnitID)
-				local pHealth = (health/maxHealth) * newUnitMaxHealth
-				spSetUnitHealth(newUnitID, pHealth)
-			else
-				spSetUnitHealth(newUnitID, health)
-			end
+		SendToUnsynced("unit_evolve_finished", unitID, newUnitID, announcement,announcementSize)
+		if evolution.evolution_health_transfer == "full" then
+		elseif evolution.evolution_health_transfer == "percentage" then
+			local _, newUnitMaxHealth = spGetUnitHealth(newUnitID)
+			local pHealth = (health/maxHealth) * newUnitMaxHealth
+			spSetUnitHealth(newUnitID, pHealth)
+		else
+			spSetUnitHealth(newUnitID, health)
+		end
 
-			spDestroyUnit(unitID, false, true)
-			spSetUnitExperience(newUnitID, experience)
-			spSetUnitStockpile(newUnitID, stockpile, stockpilebuildpercent)
-			spSetUnitDirection(newUnitID, dx, dy, dz)
-
-
-			spGiveOrderToUnit(newUnitID, CMD.FIRE_STATE, { states.firestate },             { })
-			spGiveOrderToUnit(newUnitID, CMD.MOVE_STATE, { states.movestate },             { })
-			spGiveOrderToUnit(newUnitID, CMD.REPEAT,     { states["repeat"] and 1 or 0 },  { })
-			spGiveOrderToUnit(newUnitID, CMD_WANT_CLOAK,      {states.cloak and 1 or 0 },  { })
-			spGiveOrderToUnit(newUnitID, CMD.ONOFF,      { 1 },                            { })
-			spGiveOrderToUnit(newUnitID, CMD.TRAJECTORY, { states.trajectory and 1 or 0 }, { })
-
-			ReAssignAssists(newUnitID,unitID)
 		spDestroyUnit(unitID, false, true)
 		spSetUnitExperience(newUnitID, experience)
 		spSetUnitStockpile(newUnitID, stockpile, stockpilebuildpercent)
