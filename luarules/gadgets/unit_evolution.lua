@@ -146,14 +146,27 @@ if gadgetHandler:IsSyncedCode() then
 		local transporter = Spring.GetUnitTransporter(unitID)
 
 		local evolution = evolutionMetaList[unitID]
+
 		if not evolution then
 			return
 		end
 
-		local newUnitID = spCreateUnit(newUnit, x,y,z, face, team)
+		local delayedSeconds
+		newUnitName, delayedSeconds = SkipEvolutions(evolution, newUnitName)
+		local newUnitID = spCreateUnit(newUnitName, x,y,z, face, team)
 
 		if not newUnitID then
 			return
+		end
+
+		evolutionMetaList[unitID] = nil
+
+		if (not evolution.evolution_condition
+			or evolution.evolution_condition == 'timer'
+			or evolution.evolution_condition == 'timer_global')
+			and evolutionMetaList[newUnitID] and evolutionMetaList[newUnitID].timeCreated
+			and delayedSeconds > 0 then
+			evolutionMetaList[newUnitID].timeCreated = spGetGameSeconds() - delayedSeconds
 		end
 
 		local announcement = nil
