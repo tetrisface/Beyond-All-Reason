@@ -22,6 +22,7 @@ if gadgetHandler:IsSyncedCode() then
 	local spGetUnitPosition       = Spring.GetUnitPosition
 	local spGetUnitStates = Spring.GetUnitStates
 	local spGetUnitHealth 		= Spring.GetUnitHealth
+	local spGetUnitTransporter 		= Spring.GetUnittransporter
 
 	local spGetTeamList			= Spring.GetTeamList
 	local spGetUnitExperience	= Spring.GetUnitExperience
@@ -324,7 +325,7 @@ if gadgetHandler:IsSyncedCode() then
 
 			if evolution
 				and not IsInCombat(unitID, evolution, currentTime)
-				and not Spring.GetUnitTransporter(unitID) then
+				and not spGetUnitTransporter(unitID) then
 				if (not evolution.evolution_condition or evolution.evolution_condition == 'timer'
 						and (currentTime - evolution.timeCreated) >= evolution.evolution_timer)
 					or (evolution.evolution_condition == 'timer_global' and currentTime >= evolution.evolution_timer) then
