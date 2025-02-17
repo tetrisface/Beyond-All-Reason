@@ -88,8 +88,6 @@ local floor = math.floor
 local degreeToPI = math.pi/180
 
 local spGetUnitViewPosition = Spring.GetUnitViewPosition
-local spGetPositionLosState = Spring.GetPositionLosState
-local spGetUnitLosState     = Spring.GetUnitLosState
 local spIsSphereInView      = Spring.IsSphereInView
 local spGetUnitRadius       = Spring.GetUnitRadius
 local spGetProjectilePosition = Spring.GetProjectilePosition

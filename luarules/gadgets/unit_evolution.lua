@@ -14,29 +14,14 @@ end
 
 if gadgetHandler:IsSyncedCode() then
 
-	local spCreateFeature         = Spring.CreateFeature
 	local spCreateUnit            = Spring.CreateUnit
 	local spDestroyUnit           = Spring.DestroyUnit
-	local spGetGameFrame          = Spring.GetGameFrame
-	local spGetProjectileDefID    = Spring.GetProjectileDefID
-	local spGetProjectileTeamID   = Spring.GetProjectileTeamID
-	local spGetUnitShieldState    = Spring.GetUnitShieldState
 	local spGiveOrderToUnit       = Spring.GiveOrderToUnit
-	local spSetFeatureDirection   = Spring.SetFeatureDirection
 	local spSetUnitRulesParam     = Spring.SetUnitRulesParam
 	local spGetUnitPosition       = Spring.GetUnitPosition
-	local SetUnitNoSelect         = Spring.SetUnitNoSelect
-	local spGetUnitRulesParam = Spring.GetUnitRulesParam
 	local spUseTeamResource = Spring.UseTeamResource --(teamID, "metal"|"energy", amount) return nil | bool hadEnough
 	local spGetTeamResources = Spring.GetTeamResources --(teamID, "metal"|"energy") return nil | currentLevel
-	local GetCommandQueue     = Spring.GetCommandQueue
-	local spSetUnitArmored = Spring.SetUnitArmored
 	local spGetUnitStates = Spring.GetUnitStates
-	local spGetUnitBasePosition = Spring.GetUnitBasePosition
-	local spGetUnitDefID        = Spring.GetUnitDefID
-	local spSetUnitVelocity     = Spring.SetUnitVelocity
-	local spGetUnitHeading      = Spring.GetUnitHeading
-	local spGetUnitVelocity     = Spring.GetUnitVelocity
 	local spGetUnitHealth 		= Spring.GetUnitHealth
 
 	local spGetTeamList			= Spring.GetTeamList
@@ -44,7 +29,6 @@ if gadgetHandler:IsSyncedCode() then
 	local spGetUnitTeam 		= Spring.GetUnitTeam
 	local spGetUnitDirection 	= Spring.GetUnitDirection
 	local spGetUnitStockpile 	= Spring.GetUnitStockpile
-	local spGetUnitCommands = Spring.GetUnitCommands
 	local spEcho = Spring.Echo
 	local spSetUnitHealth = Spring.SetUnitHealth
 

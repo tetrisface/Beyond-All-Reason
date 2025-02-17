@@ -66,7 +66,6 @@ local function makeAtlas()
 	end
 end
 
-local spGetUnitMoveTypeData = Spring.GetUnitMoveTypeData
 local GetUnitDefID = Spring.GetUnitDefID
 local GetUnitExperience = Spring.GetUnitExperience
 local GetAllUnits = Spring.GetAllUnits

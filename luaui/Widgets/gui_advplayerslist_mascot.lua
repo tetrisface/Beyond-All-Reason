@@ -101,7 +101,6 @@ end
 --  Declarations
 ---------------------------------------------------------------------------------------------------
 
-local spGetGameFrame			= Spring.GetGameFrame
 local myPlayerID				= Spring.GetMyPlayerID()
 
 local glBlending          		= gl.Blending

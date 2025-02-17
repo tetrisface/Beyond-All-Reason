@@ -45,7 +45,6 @@ local selectionChanged
 --------------------------------------------------------------------------------
 local GetActiveCommand = Spring.GetActiveCommand
 local GetCameraPosition = Spring.GetCameraPosition
-local GetFeaturePosition = Spring.GetFeaturePosition
 local GetGroundHeight = Spring.GetGroundHeight
 local GetMouseState = Spring.GetMouseState
 local GetSelectedUnitsSorted = Spring.GetSelectedUnitsSorted

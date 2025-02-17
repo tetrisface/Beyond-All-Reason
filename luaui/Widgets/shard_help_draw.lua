@@ -70,9 +70,7 @@ local mMax = math.max
 
 local spIsSphereInView = Spring.IsSphereInView
 local spGetGroundHeight = Spring.GetGroundHeight
-local spGetGroundInfo = Spring.GetGroundInfo
 local spWorldToScreenCoords = Spring.WorldToScreenCoords
-local spGetCameraState = Spring.GetCameraState
 local spEcho = Spring.Echo
 local spGetViewGeometry = Spring.GetViewGeometry
 local spGetUnitPosition = Spring.GetUnitPosition

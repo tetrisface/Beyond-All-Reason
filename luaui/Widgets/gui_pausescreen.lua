@@ -14,7 +14,6 @@ function widget:GetInfo()
 end
 
 local spGetGameSpeed = Spring.GetGameSpeed
-local spGetGameState = Spring.GetGameState
 local spGetGameFrame = Spring.GetGameFrame
 
 local glColor = gl.Color

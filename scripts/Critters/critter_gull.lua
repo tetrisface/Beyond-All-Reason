@@ -6,10 +6,6 @@ local flapSpeed = math.rad(360)
 local volume 			= 0.5
 local soundPause 		= 300
 local lastSound		 	= 0
-local PlaySoundFile 	= Spring.PlaySoundFile
-local GetUnitPosition 	= Spring.GetUnitPosition
-local GetUnitVelocity   = Spring.GetUnitVelocity
-local GetGameFrame 		= Spring.GetGameFrame
 
 function script.Create()
 	StartThread (flapWings)

@@ -41,7 +41,6 @@ local myTeamID
 
 local GetUnitPosition = Spring.GetUnitPosition
 local GetUnitDefID = Spring.GetUnitDefID
-local Echo = Spring.Echo
 local GetPlayerInfo = Spring.GetPlayerInfo
 local GetCommandQueue = Spring.GetCommandQueue
 local GetUnitSeparation = Spring.GetUnitSeparation

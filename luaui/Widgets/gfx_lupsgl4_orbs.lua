@@ -11,12 +11,6 @@ function widget:GetInfo()
 	}
 end
 
-local spGetUnitPieceInfo = Spring.GetUnitPieceInfo
-local spGetGameFrame = Spring.GetGameFrame
-local spGetUnitPieceMap = Spring.GetUnitPieceMap
-local spGetUnitIsActive = Spring.GetUnitIsActive
-local spGetUnitMoveTypeData = Spring.GetUnitMoveTypeData
-local spGetUnitVelocity = Spring.GetUnitVelocity
 local spGetUnitTeam = Spring.GetUnitTeam
 local glBlending = gl.Blending
 local glTexture = gl.Texture
@@ -29,7 +23,6 @@ local GL_ONE = GL.ONE
 local glAlphaTest = gl.AlphaTest
 local glDepthTest = gl.DepthTest
 
-local spValidUnitID = Spring.ValidUnitID
 
 --------------------------------------------------------------------------------
 -- Beherith's notes

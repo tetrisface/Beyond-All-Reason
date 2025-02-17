@@ -232,7 +232,6 @@ local glDepthTest = gl.DepthTest
 local GL_BACK = GL.BACK
 local GL_LEQUAL = GL.LEQUAL
 
-local spValidUnitID = Spring.ValidUnitID
 
 local spec, fullview = Spring.GetSpectatingState()
 

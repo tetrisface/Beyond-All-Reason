@@ -54,7 +54,6 @@ local maxScale			= 4			-- ignore spots above this scale (probably metalmap)
 
 local extractorRadius = Game.extractorRadius * 1.2
 
-local spIsSphereInView = Spring.IsSphereInView
 local spGetUnitsInSphere = Spring.GetUnitsInSphere
 local spGetUnitDefID = Spring.GetUnitDefID
 local spGetGroundHeight = Spring.GetGroundHeight

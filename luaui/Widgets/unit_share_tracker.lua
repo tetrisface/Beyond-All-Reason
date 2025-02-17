@@ -48,14 +48,11 @@ local font
 -- speedups
 ----------------------------------------------------------------
 
-local ArePlayersAllied = Spring.ArePlayersAllied
 local GetPlayerInfo = Spring.GetPlayerInfo
 local GetTeamColor = Spring.GetTeamColor
-local GetSpectatingState = Spring.GetSpectatingState
 local WorldToScreenCoords = Spring.WorldToScreenCoords
 local GetUnitPosition = Spring.GetUnitPosition
 local GetMyTeamID = Spring.GetMyTeamID
-local PlaySoundFile = Spring.PlaySoundFile
 local glColor = gl.Color
 local glRect = gl.Rect
 local glLineWidth = gl.LineWidth

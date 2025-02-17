@@ -67,17 +67,11 @@ local ipairs = ipairs
 local next   = next
 
 local spGetUnitRadius        = Spring.GetUnitRadius
-local spIsUnitVisible        = Spring.IsUnitVisible
 local spIsSphereInView       = Spring.IsSphereInView
-local spGetUnitLosState      = Spring.GetUnitLosState
-local spGetUnitViewPosition  = Spring.GetUnitViewPosition
-local spGetUnitDirection     = Spring.GetUnitDirection
-local spGetHeadingFromVector = Spring.GetHeadingFromVector
 local spGetUnitIsActive      = Spring.GetUnitIsActive
 local spGetUnitRulesParam    = Spring.GetUnitRulesParam
 local spGetGameFrame         = Spring.GetGameFrame
 local spGetFrameTimeOffset   = Spring.GetFrameTimeOffset
-local spGetUnitPieceList     = Spring.GetUnitPieceList
 local spGetSpectatingState   = Spring.GetSpectatingState
 local spGetLocalAllyTeamID   = Spring.GetLocalAllyTeamID
 local scGetReadAllyTeam      = Script.GetReadAllyTeam

@@ -5,7 +5,6 @@ function radius_attack(attackers, targetsCenter)
 	local targetPosition = {targetsCenter[1], y+5, targetsCenter[2], targetsCenter[3]}
 
 	local CMD_ATTACK = CMD.ATTACK
-	local spGiveOrderToUnit = Spring.GiveOrderToUnit
 
 	Spring.SelectUnitArray(attackers)
 	Spring.GiveOrder(CMD_ATTACK, targetPosition, 0)

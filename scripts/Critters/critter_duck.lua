@@ -10,7 +10,6 @@ local ta = math.rad (30)
 local volume 			= 0.5
 local soundPause 		= 300
 local lastSound 		= 0
-local PlaySoundFile 	= Spring.PlaySoundFile
 local GetUnitPosition 	= Spring.GetUnitPosition
 local GetGameFrame 		= Spring.GetGameFrame
 
