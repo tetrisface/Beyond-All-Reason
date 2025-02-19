@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+
+# Ensure consistent behavior across platforms
+set -euo pipefail
+
+# Determine the OS and set path separator
+path_sep="/"
+if [ "$OSTYPE" = "msys" ] || [ "$OSTYPE" = "win32" ] || [ "$OSTYPE" = "cygwin" ]; then
+    path_sep="\\"
+fi
+
+# Get all staged Lua files, handling paths for Windows
+files=$(git diff --cached --name-only --diff-filter=ACM | grep '\.lua$' || true)
+
+if [ -z "$files" ]; then
+    echo "No Lua files to check"
+    exit 0
+fi
+
+# Verify luacheck is available
+if ! command -v luacheck >/dev/null 2>&1; then
+    echo "Error: luacheck not found. Please install it:"
+    echo "  Windows (using LuaRocks): luarocks install luacheck"
+    echo "  Windows (using Scoop): scoop install luacheck"
+    echo "  Unix/Linux: luarocks install luacheck"
+    exit 1
+fi
+
+# Debug info
+echo "Files to check:"
+echo "$files"
+
+# Run luacheck on staged files
+echo "Running luacheck..."
+# Use xargs to handle spaces in filenames and long file lists
+echo "$files" | tr '\n' '\0' | xargs -0 luacheck
+
+# Store the exit code
+exit_code=$?
+
+if [ $exit_code -ne 0 ]; then
+    echo "❌ Luacheck found issues. Please fix them before committing."
+    exit 1
+fi
+
+echo "✅ Luacheck passed!"
+exit 0
+EOF
