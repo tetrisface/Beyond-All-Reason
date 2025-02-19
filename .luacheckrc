@@ -3,7 +3,7 @@ self = false
 -- Unused variables configuration
 unused = true         -- Enable unused variable checking
 unused_args = false   -- Don't report unused function arguments
-unused_secondaries = true  -- Report unused variables in multiple assignments (a, b = 1, 2)
+unused_secondaries = false  -- Report unused variables in multiple assignments (a, b = 1, 2)
 global = false
 allow_defined_top = true
 max_line_length = false
@@ -20,7 +20,6 @@ ignore = {
     "612", -- TODO: line contains trailing whitespace
     "614", -- TODO: trailing whitespace in a comment
     "621", -- TODO: inconsistent indentation
-    "21/_.*",   -- Ignore unused variables starting with underscore (warning code 21)
 }
 -- Something to think about in the future
 -- max_cyclomatic_complexity = 30

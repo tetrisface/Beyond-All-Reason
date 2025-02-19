@@ -20,7 +20,6 @@ if gadgetHandler:IsSyncedCode() then
 	local spGetProjectileTeamID   = Spring.GetProjectileTeamID
 	local spGetUnitShieldState    = Spring.GetUnitShieldState
 	local spGiveOrderToUnit       = Spring.GiveOrderToUnit
-	local spSetFeatureDirection   = Spring.SetFeatureDirection
 	local spSetUnitRulesParam     = Spring.SetUnitRulesParam
 	local spGetUnitPosition       = Spring.GetUnitPosition
 	local SetUnitNoSelect         = Spring.SetUnitNoSelect
