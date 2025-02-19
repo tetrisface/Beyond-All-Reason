@@ -17,7 +17,6 @@ if gadgetHandler:IsSyncedCode() then
 	local spCreateUnit            = Spring.CreateUnit
 	local spDestroyUnit           = Spring.DestroyUnit
 	local spGetGameFrame          = Spring.GetGameFrame
-	local spGetProjectileDefID    = Spring.GetProjectileDefID
 	local spGetProjectileTeamID   = Spring.GetProjectileTeamID
 	local spGetUnitShieldState    = Spring.GetUnitShieldState
 	local spGiveOrderToUnit       = Spring.GiveOrderToUnit
