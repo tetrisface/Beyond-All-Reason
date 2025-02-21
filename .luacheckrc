@@ -1,9 +1,9 @@
 
 self = false
 -- Unused variables configuration
-unused = true         -- Enable unused variable checking
-unused_args = false   -- Don't report unused function arguments
-unused_secondaries = false  -- Report unused variables in multiple assignments (a, b = 1, 2)
+unused = true         -- Report unused variable checking
+unused_args = false   -- Report unused function arguments
+unused_secondaries = false  -- Report unused variables in multiple assignments a, b, c = ...
 global = false
 allow_defined_top = true
 max_line_length = false
@@ -14,13 +14,13 @@ redefined = false     -- Allow variable redefinition
 
 ignore = {
     "512", -- Loop can be executed at most once.
-
     "542", -- TODO: empty if branch
     "611", -- TODO: line contains only whitespace
     "612", -- TODO: line contains trailing whitespace
     "614", -- TODO: trailing whitespace in a comment
     "621", -- TODO: inconsistent indentation
 }
+
 -- Something to think about in the future
 -- max_cyclomatic_complexity = 30
 
@@ -58,4 +58,5 @@ globals = {
 exclude_files = {
     -- "third_party/*",
     -- "vendor/*",
+    -- "vendor/exception.lua",
 }
