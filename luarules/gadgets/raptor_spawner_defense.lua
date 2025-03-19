@@ -89,7 +89,7 @@ if gadgetHandler:IsSyncedCode() then
 	local t = 0 -- game time in secondstarget
 	local queenAnger = 0
 	local techAnger = 0
-	local totalQueenMaxHealth
+	local aliveBossesMaxHealth = 0
 	local playerAggression = 0
 	local playerAggressionLevel = 0
 	local playerAggressionEcoValue = 0
@@ -134,6 +134,7 @@ if gadgetHandler:IsSyncedCode() then
 	local deathQueue = {}
 	local queenResistance = {}
 	local queenIDs = {}
+	local bosses = {resistances = queenResistance, statuses = {}}
 	local raptorTeamID, raptorAllyTeamID
 	local lsx1, lsz1, lsx2, lsz2
 	local burrows = {}
@@ -345,6 +346,8 @@ if gadgetHandler:IsSyncedCode() then
 		nSpawnedQueens = 0
 		nKilledQueens = 0
 		queenResistance = {}
+		aliveBossesMaxHealth = 0
+		bosses = {resistances = queenResistance, statuses = {}}
 		SetGameRulesParam("raptorQueenAnger", math.floor(queenAnger))
 		SetGameRulesParam("raptorTechAnger", math.floor(techAnger))
 		local nextDifficulty
@@ -872,14 +875,24 @@ if gadgetHandler:IsSyncedCode() then
 		end
 
 		local totalHealth = 0
-		totalQueenMaxHealth = 0
-		for queenID, _ in pairs(queenIDs) do
-			local health, maxHealth = GetUnitHealth(queenID)
-			totalHealth = totalHealth + health
-			totalQueenMaxHealth = totalQueenMaxHealth + maxHealth
+		local totalMaxHealth = 0
+		aliveBossesMaxHealth = 0
+		for bossID, status in pairs(bosses.statuses) do
+			if status.isDead then
+				totalMaxHealth = totalMaxHealth + status.maxHealth
+			else
+				local health, maxHealth = GetUnitHealth(bossID)
+				bosses.statuses[tostring(bossID)] = {health = health, maxHealth = maxHealth}
+
+				totalHealth = totalHealth + health
+				aliveBossesMaxHealth = aliveBossesMaxHealth + maxHealth
+				totalMaxHealth = totalMaxHealth + maxHealth
+			end
 		end
-		SetGameRulesParam("raptorQueenHealth", math.floor(0.5 + ((totalHealth / totalQueenMaxHealth) * 100)))
-	end
+
+		SetGameRulesParam("raptorQueenHealth", math.floor(0.5 + ((totalHealth / totalMaxHealth) * 100)))
+		SetGameRulesParam("pveBossInfo", Json.encode(bosses))
+		end
 
 	function SpawnQueen()
 		local bestScore = 0
@@ -1395,19 +1408,17 @@ if gadgetHandler:IsSyncedCode() then
 				if weaponID == -1 and damage > 1 then
 					damage = 1
 				end
+				attackerDefID = tostring(attackerDefID)
 				if not queenResistance[attackerDefID] then
 					queenResistance[attackerDefID] = {
 						damage = damage * 4 * config.queenResistanceMult,
 						notify = 0
 					}
 				end
-				if not totalQueenMaxHealth then
-					updateQueenHealth()
-				end
-				local resistPercent = math.min((queenResistance[attackerDefID].damage) / totalQueenMaxHealth, 0.95)
+				local resistPercent = math.min((queenResistance[attackerDefID].damage) / aliveBossesMaxHealth, 0.95)
 				if resistPercent > 0.5 then
 					if queenResistance[attackerDefID].notify == 0 then
-						raptorEvent("queenResistance", attackerDefID)
+						raptorEvent("queenResistance", tonumber(attackerDefID))
 						queenResistance[attackerDefID].notify = 1
 						if mRandom() < config.spawnChance then
 							local squad
@@ -1445,6 +1456,7 @@ if gadgetHandler:IsSyncedCode() then
 				end
 				damage = damage - (damage * resistPercent)
 				queenResistance[attackerDefID].damage = queenResistance[attackerDefID].damage + (damage * 4 * config.queenResistanceMult)
+				queenResistance[attackerDefID].percent = resistPercent
 			else
 				damage = 1
 			end
@@ -1667,7 +1679,7 @@ if gadgetHandler:IsSyncedCode() then
 			if queenID then
 				nSpawnedQueens = nSpawnedQueens + 1
 				queenIDs[queenID] = true
-				Spring.Echo({func="updateSpawnQueen", queen_status = {spawned = nSpawnedQueens, killed = nKilledQueens, ids = queenIDs}})
+				bosses.statuses[tostring(queenID)] = {}
 
 				local queenSquad = table.copy(squadCreationQueueDefaults)
 				queenSquad.life = 999999
@@ -1999,6 +2011,7 @@ if gadgetHandler:IsSyncedCode() then
 		if queenIDs[unitID] then
 			nKilledQueens = nKilledQueens + 1
 			queenIDs[unitID] = nil
+			table.mergeInPlace(bosses.statuses, {[tostring(unitID)] = {isDead = true, health = 0}})
 			SetGameRulesParam("raptorQueensKilled", nKilledQueens)
 
 			if nKilledQueens >= nTotalQueens then
