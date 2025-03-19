@@ -45,11 +45,9 @@ if gadgetHandler:IsSyncedCode() then
 	local teamPowerList = {}
 	local highestTeamPower = 0
 
-	local lastTimerCheck = 0
-	local lastPowerCheck = 0
-
-	local TIMER_CHECK_FREQUENCY = 30 -- gameframes
-	local POWER_CHECK_FREQUENCY = 45 -- gameframes
+	local lastCheckIndex = 1
+	local toCheckUnitIDs = {}
+	local nToCheckUnitIDs = 0
 
 	include("luarules/configs/customcmds.h.lua")
 	--messages[1] = textColor .. Spring.I18N('ui.raptors.wave1', {waveNumber = raptorEventArgs.waveCount})
@@ -125,11 +123,37 @@ if gadgetHandler:IsSyncedCode() then
 --------------------------------------------------------------------------------
 
 
+	local function SkipEvolutions(evolutionMetaOld, newUnitName)
+		local evolutionMetaNew = UnitDefNames[newUnitName].customParams
+
+		if not evolutionMetaNew or
+		not (
+			not evolutionMetaNew.evolution_condition
+			or evolutionMetaNew.evolution_condition == 'timer'
+			or evolutionMetaNew.evolution_condition == 'timer_global') then
+				return newUnitName, 0
+			end
+
+		local defaultTimer = 20 * GAME_SPEED
+		local evolutionMetaNewTimer = tonumber(evolutionMetaNew.evolution_timer) or defaultTimer
+		local delayedSeconds = spGetGameSeconds() - evolutionMetaOld.timeCreated - (tonumber(evolutionMetaOld.evolution_timer) or defaultTimer)
+
+		while delayedSeconds > evolutionMetaNewTimer
+			and evolutionMetaNew
+			and evolutionMetaNew.evolution_target
+			and UnitDefNames[evolutionMetaNew.evolution_target].customParams do
+
+			evolutionMetaNewTimer = tonumber(evolutionMetaNew.evolution_timer) or defaultTimer
+			newUnitName = evolutionMetaNew.evolution_target
+			evolutionMetaNew = UnitDefNames[newUnitName].customParams
+			delayedSeconds = delayedSeconds - evolutionMetaNewTimer
+		end
+
+		return newUnitName, delayedSeconds
+	end
 
 
-
-
-	function Evolve(unitID, newUnit)
+	function Evolve(unitID, toUnitName)
 		local x,y,z = spGetUnitPosition(unitID)
 		if not z then
 			return
@@ -151,9 +175,8 @@ if gadgetHandler:IsSyncedCode() then
 			return
 		end
 
-		local delayedSeconds
-		newUnitName, delayedSeconds = SkipEvolutions(evolution, newUnitName)
-		local newUnitID = spCreateUnit(newUnitName, x,y,z, face, team)
+		local toUnitNameSkipped, delayedSeconds = SkipEvolutions(evolution, toUnitName)
+		local newUnitID = spCreateUnit(toUnitNameSkipped, x,y,z, face, team)
 
 		if not newUnitID then
 			return
@@ -357,7 +380,7 @@ if gadgetHandler:IsSyncedCode() then
 	end
 
 	function gadget:GameFrame(f)
-		if f % GAME_SPEED ~= 0 then
+		if f % GAME_SPEED ~= 0 or FillToCheckUnitIDs() then
 			return
 		end
 
