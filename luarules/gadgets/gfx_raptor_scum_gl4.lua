@@ -302,7 +302,7 @@ if gadgetHandler:IsSyncedCode() then
 
 
 
-elseif not Spring.Utilities.Gametype.IsScavengers() then	-- UNSYNCED
+elseif Spring.Utilities.Gametype.IsRaptors() then	-- UNSYNCED
 
 
 
