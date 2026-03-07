@@ -156,8 +156,9 @@ if gadgetHandler:IsSyncedCode() then
 	local burrows = {}
 	local squadsTable = {}
 	local unitSquadTable = {}
-	local squadPotentialTarget = {}
-	local squadPotentialHighValueTarget = {}
+	local SetListUtilities = VFS.Include('common/SetList.lua')
+	local squadPotentialTarget = SetListUtilities.NewSetListNoTable()
+	local squadPotentialHighValueTarget = SetListUtilities.NewSetListNoTable()
 	local unitTargetPool = {}
 	local unitCowardCooldown = {}
 	local unitTeleportCooldown = {}
@@ -270,6 +271,9 @@ if gadgetHandler:IsSyncedCode() then
 		return count
 	end
 
+	local commandersList = SetToList(squadSpawnOptions.commanders)
+	local decoyCommandersList = SetToList(squadSpawnOptions.decoyCommanders)
+
 	function getRandomMapPos()
 		local x = mRandom(16, MAPSIZEX - 16)
 		local z = mRandom(16, MAPSIZEZ - 16)
@@ -279,43 +283,35 @@ if gadgetHandler:IsSyncedCode() then
 
 	function getRandomEnemyPos()
 		local loops = 0
-		local targetCount = SetCount(squadPotentialTarget)
-		local highValueTargetCount = SetCount(squadPotentialHighValueTarget)
+		local targetCount = squadPotentialTarget.count
+		local highValueTargetCount = squadPotentialHighValueTarget.count
 		local pos = {}
 		local pickedTarget = nil
 		local highValueTargetPickChance = math.min(0.75, highValueTargetCount*0.15)
 		repeat
 			loops = loops + 1
 			if highValueTargetCount > 0 and mRandom() <= highValueTargetPickChance then
-				for target in pairs(squadPotentialHighValueTarget) do
-					if mRandom(1,highValueTargetCount) == 1 then
-						if ValidUnitID(target) and not GetUnitIsDead(target) and not GetUnitNeutral(target) then
-							local x,y,z = Spring.GetUnitPosition(target)
-							pos = {x = x+mRandom(-32,32), y = y, z = z+mRandom(-32,32)}
-							pickedTarget = target
-							break
-						end
-					end
+				local target = squadPotentialHighValueTarget:GetRandom()
+				if target and ValidUnitID(target) and not GetUnitIsDead(target) and not GetUnitNeutral(target) then
+					local x,y,z = Spring.GetUnitPosition(target)
+					pos = {x = x+mRandom(-32,32), y = y, z = z+mRandom(-32,32)}
+					pickedTarget = target
 				end
-			else
-				for target in pairs(squadPotentialTarget) do
-					if mRandom(1,targetCount) == 1 then
-						if ValidUnitID(target) and not GetUnitIsDead(target) and not GetUnitNeutral(target) then
-							local x,y,z = Spring.GetUnitPosition(target)
-							pos = {x = x+mRandom(-32,32), y = y, z = z+mRandom(-32,32)}
-							pickedTarget = target
-							break
-						end
-					end
+			elseif targetCount > 0 then
+				local target = squadPotentialTarget:GetRandom()
+				if target and ValidUnitID(target) and not GetUnitIsDead(target) and not GetUnitNeutral(target) then
+					local x,y,z = Spring.GetUnitPosition(target)
+					pos = {x = x+mRandom(-32,32), y = y, z = z+mRandom(-32,32)}
+					pickedTarget = target
 				end
 			end
-
 		until pos.x or loops >= 10
 
 		if not pos.x then
 			pos = getRandomMapPos()
 		end
 
+		if GG.ScavTargetingMetrics then GG.ScavTargetingMetrics(pickedTarget) end
 		return pos, pickedTarget
 	end
 
@@ -856,8 +852,10 @@ if gadgetHandler:IsSyncedCode() then
 				end
 			end
 			if mRandom() <= 0.5 then
-				for name, data in pairs(squadSpawnOptions.commanders) do
-					if mRandom() <= config.spawnChance and mRandom(1, SetCount(squadSpawnOptions.commanders)) == 1 and (not waveParameters.commanders.waveCommanders[name]) and data.minAnger <= waveParameters.waveTechAnger and data.maxAnger >= waveParameters.waveTechAnger and Spring.GetTeamUnitDefCount(scavTeamID, UnitDefNames[name].id) < data.maxAlive and CommandersPopulation+waveParameters.commanders.waveCommanderCount < SetCount(humanTeams)*(waveParameters.waveTechAnger*0.005) then
+				for _ = 1, #commandersList do
+					local name = commandersList[mRandom(1, #commandersList)]
+					local data = squadSpawnOptions.commanders[name]
+					if mRandom() <= config.spawnChance and (not waveParameters.commanders.waveCommanders[name]) and data.minAnger <= waveParameters.waveTechAnger and data.maxAnger >= waveParameters.waveTechAnger and Spring.GetTeamUnitDefCount(scavTeamID, UnitDefNames[name].id) < data.maxAlive and CommandersPopulation+waveParameters.commanders.waveCommanderCount < SetCount(humanTeams)*(waveParameters.waveTechAnger*0.005) then
 						waveParameters.commanders.waveCommanders[name] = true
 						waveParameters.commanders.waveCommanderCount = waveParameters.commanders.waveCommanderCount + 1
 						table.insert(spawnQueue, { burrow = burrowID, unitName = name, team = scavTeamID, squadID = 1 })
@@ -865,8 +863,10 @@ if gadgetHandler:IsSyncedCode() then
 					end
 				end
 			else
-				for name, data in pairs(squadSpawnOptions.decoyCommanders) do
-					if mRandom() <= config.spawnChance and mRandom(1, SetCount(squadSpawnOptions.decoyCommanders)) == 1 and (not waveParameters.commanders.waveDecoyCommanders[name]) and data.minAnger <= waveParameters.waveTechAnger and data.maxAnger >= waveParameters.waveTechAnger and Spring.GetTeamUnitDefCount(scavTeamID, UnitDefNames[name].id) < data.maxAlive and DecoyCommandersPopulation+waveParameters.commanders.waveDecoyCommanderCount < SetCount(humanTeams)*(waveParameters.waveTechAnger*0.005) then
+				for _ = 1, #decoyCommandersList do
+					local name = decoyCommandersList[mRandom(1, #decoyCommandersList)]
+					local data = squadSpawnOptions.decoyCommanders[name]
+					if mRandom() <= config.spawnChance and (not waveParameters.commanders.waveDecoyCommanders[name]) and data.minAnger <= waveParameters.waveTechAnger and data.maxAnger >= waveParameters.waveTechAnger and Spring.GetTeamUnitDefCount(scavTeamID, UnitDefNames[name].id) < data.maxAlive and DecoyCommandersPopulation+waveParameters.commanders.waveDecoyCommanderCount < SetCount(humanTeams)*(waveParameters.waveTechAnger*0.005) then
 						waveParameters.commanders.waveDecoyCommanders[name] = true
 						waveParameters.commanders.waveDecoyCommanderCount = waveParameters.commanders.waveDecoyCommanderCount + 1
 						table.insert(spawnQueue, { burrow = burrowID, unitName = name, team = scavTeamID, squadID = 1 })
@@ -1427,8 +1427,10 @@ if gadgetHandler:IsSyncedCode() then
 						end
 					end
 					if mRandom() <= 0.5 then
-						for name, data in pairs(squadSpawnOptions.commanders) do
-							if mRandom() <= config.spawnChance and mRandom(1, SetCount(squadSpawnOptions.commanders)) == 1 and (not waveParameters.commanders.waveCommanders[name]) and data.minAnger <= waveParameters.waveTechAnger and data.maxAnger >= waveParameters.waveTechAnger and Spring.GetTeamUnitDefCount(scavTeamID, UnitDefNames[name].id) < data.maxAlive and CommandersPopulation+waveParameters.commanders.waveCommanderCount < SetCount(humanTeams)*(waveParameters.waveTechAnger*0.005) then
+						for _ = 1, #commandersList do
+							local name = commandersList[mRandom(1, #commandersList)]
+							local data = squadSpawnOptions.commanders[name]
+							if mRandom() <= config.spawnChance and (not waveParameters.commanders.waveCommanders[name]) and data.minAnger <= waveParameters.waveTechAnger and data.maxAnger >= waveParameters.waveTechAnger and Spring.GetTeamUnitDefCount(scavTeamID, UnitDefNames[name].id) < data.maxAlive and CommandersPopulation+waveParameters.commanders.waveCommanderCount < SetCount(humanTeams)*(waveParameters.waveTechAnger*0.005) then
 								waveParameters.commanders.waveCommanders[name] = true
 								waveParameters.commanders.waveCommanderCount = waveParameters.commanders.waveCommanderCount + 1
 								table.insert(spawnQueue, { burrow = burrowID, unitName = name, team = scavTeamID, squadID = 1 })
@@ -1437,8 +1439,10 @@ if gadgetHandler:IsSyncedCode() then
 							end
 						end
 					else
-						for name, data in pairs(squadSpawnOptions.decoyCommanders) do
-							if mRandom() <= config.spawnChance and mRandom(1, SetCount(squadSpawnOptions.decoyCommanders)) == 1 and (not waveParameters.commanders.waveDecoyCommanders[name]) and data.minAnger <= waveParameters.waveTechAnger and data.maxAnger >= waveParameters.waveTechAnger and Spring.GetTeamUnitDefCount(scavTeamID, UnitDefNames[name].id) < data.maxAlive and DecoyCommandersPopulation+waveParameters.commanders.waveDecoyCommanderCount < SetCount(humanTeams)*(waveParameters.waveTechAnger*0.005) then
+						for _ = 1, #decoyCommandersList do
+							local name = decoyCommandersList[mRandom(1, #decoyCommandersList)]
+							local data = squadSpawnOptions.decoyCommanders[name]
+							if mRandom() <= config.spawnChance and (not waveParameters.commanders.waveDecoyCommanders[name]) and data.minAnger <= waveParameters.waveTechAnger and data.maxAnger >= waveParameters.waveTechAnger and Spring.GetTeamUnitDefCount(scavTeamID, UnitDefNames[name].id) < data.maxAlive and DecoyCommandersPopulation+waveParameters.commanders.waveDecoyCommanderCount < SetCount(humanTeams)*(waveParameters.waveTechAnger*0.005) then
 								waveParameters.commanders.waveDecoyCommanders[name] = true
 								waveParameters.commanders.waveDecoyCommanderCount = waveParameters.commanders.waveDecoyCommanderCount + 1
 								table.insert(spawnQueue, { burrow = burrowID, unitName = name, team = scavTeamID, squadID = 1 })
@@ -1627,13 +1631,13 @@ if gadgetHandler:IsSyncedCode() then
 
 		capturableUnits[unitID] = true
 		if squadPotentialTarget[unitID] or squadPotentialHighValueTarget[unitID] then
-			squadPotentialTarget[unitID] = nil
-			squadPotentialHighValueTarget[unitID] = nil
+			squadPotentialTarget:Remove(unitID)
+			squadPotentialHighValueTarget:Remove(unitID)
 		end
 		if not UnitDefs[unitDefID].canMove then
-			squadPotentialTarget[unitID] = true
+			squadPotentialTarget:Add(unitID)
 			if config.highValueTargets[unitDefID] then
-				squadPotentialHighValueTarget[unitID] = true
+				squadPotentialHighValueTarget:Add(unitID)
 			end
 		end
 		if config.ecoBuildingsPenalty[unitDefID] then
@@ -2247,8 +2251,8 @@ if gadgetHandler:IsSyncedCode() then
 		end
 
 		if newTeam == scavTeamID then
-			squadPotentialTarget[unitID] = nil
-			squadPotentialHighValueTarget[unitID] = nil
+			squadPotentialTarget:Remove(unitID)
+			squadPotentialHighValueTarget:Remove(unitID)
 			capturableUnits[unitID] = nil
 			for squad in ipairs(unitTargetPool) do
 				if unitTargetPool[squad] == unitID then
@@ -2323,8 +2327,8 @@ if gadgetHandler:IsSyncedCode() then
 			end
 		end
 
-		squadPotentialTarget[unitID] = nil
-		squadPotentialHighValueTarget[unitID] = nil
+		squadPotentialTarget:Remove(unitID)
+		squadPotentialHighValueTarget:Remove(unitID)
 		capturableUnits[unitID] = nil
 		for squad in ipairs(unitTargetPool) do
 			if unitTargetPool[squad] == unitID then
