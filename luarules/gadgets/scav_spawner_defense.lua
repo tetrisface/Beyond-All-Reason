@@ -158,6 +158,7 @@ if gadgetHandler:IsSyncedCode() then
 	local unitSquadTable = {}
 	local squadPotentialTarget = {}
 	local squadPotentialHighValueTarget = {}
+	GG.scavTargetPools = { targets = squadPotentialTarget, highValue = squadPotentialHighValueTarget }
 	local unitTargetPool = {}
 	local unitCowardCooldown = {}
 	local unitTeleportCooldown = {}

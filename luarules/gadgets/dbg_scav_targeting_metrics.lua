@@ -42,8 +42,23 @@ if gadgetHandler:IsSyncedCode() then
 		if totalSelections == 0 then return end
 		lastReportTime = gameSeconds
 
+		-- Count units per allyteam from the actual target pool
+		local poolPerAllyTeam = {}
+		local totalPoolSize = 0
+		local pools = GG.scavTargetPools
+		if pools then
+			for _, pool in pairs(pools) do
+				for unitID in pairs(pool) do
+					local at = GetUnitAllyTeam(unitID)
+					if at and at ~= scavAllyTeamID then
+						poolPerAllyTeam[at] = (poolPerAllyTeam[at] or 0) + 1
+						totalPoolSize = totalPoolSize + 1
+					end
+				end
+			end
+		end
+
 		local allyTeamsData = {}
-		local minOE, maxOE = math.huge, 0
 		local activeTeams = 0
 
 		for allyTeam, selections in pairs(selectionsPerAllyTeam) do
@@ -52,29 +67,31 @@ if gadgetHandler:IsSyncedCode() then
 
 		if activeTeams < 2 then return end
 
+		-- Compute both naive O/E (equal weight) and weighted O/E (by pool share)
 		local expectedPerTeam = totalSelections / activeTeams
 
 		for allyTeam, selections in pairs(selectionsPerAllyTeam) do
 			local oe = selections / expectedPerTeam
-			if oe < minOE then minOE = oe end
-			if oe > maxOE then maxOE = oe end
+			local poolUnits = poolPerAllyTeam[allyTeam] or 0
+			local weightedExpected = totalPoolSize > 0 and (totalSelections * poolUnits / totalPoolSize) or expectedPerTeam
+			local woe = weightedExpected > 0 and (selections / weightedExpected) or 0
+
 			allyTeamsData[tostring(allyTeam)] = {
 				selections = selections,
+				poolUnits = poolUnits,
 				OE = math.floor(oe * 100 + 0.5) / 100,
+				wOE = math.floor(woe * 100 + 0.5) / 100,
 			}
 		end
 
-		local fairnessIndex = minOE > 0 and (math.floor((maxOE / minOE) * 100 + 0.5) / 100) or 0
-
 		local parts = {}
-		parts[#parts+1] = string.format('"gameSeconds":%d,"totalSelections":%d', gameSeconds, totalSelections)
+		parts[#parts+1] = string.format('"gameMinutes":%.1f,"gameSeconds":%d,"totalSelections":%d,"totalPoolSize":%d', gameSeconds/60, gameSeconds, totalSelections, totalPoolSize)
 
 		local teamParts = {}
 		for allyTeam, data in pairs(allyTeamsData) do
-			teamParts[#teamParts+1] = string.format('"%s":{"selections":%d,"OE":%.2f}', allyTeam, data.selections, data.OE)
+			teamParts[#teamParts+1] = string.format('"%s":{"selections":%d,"poolUnits":%d,"OE":%.2f,"wOE":%.2f}', allyTeam, data.selections, data.poolUnits, data.OE, data.wOE)
 		end
 		parts[#parts+1] = '"allyTeams":{' .. table.concat(teamParts, ",") .. "}"
-		parts[#parts+1] = string.format('"fairnessIndex":%.2f', fairnessIndex)
 
 		Spring.Echo("[SCAV_METRICS_JSON] {" .. table.concat(parts, ",") .. "}")
 	end
