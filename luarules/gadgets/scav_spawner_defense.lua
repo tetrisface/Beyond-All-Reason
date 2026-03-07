@@ -316,6 +316,7 @@ if gadgetHandler:IsSyncedCode() then
 			pos = getRandomMapPos()
 		end
 
+		if GG.ScavTargetingMetrics then GG.ScavTargetingMetrics(pickedTarget) end
 		return pos, pickedTarget
 	end
 
