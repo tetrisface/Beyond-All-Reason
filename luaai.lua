@@ -29,6 +29,10 @@ return {
     desc = 'Medium  AI by @pandaro',
   },
   {
+    name = 'EcoBenchAI',
+    desc = 'EcoBench economy benchmark AI'
+  },
+  {
     name = 'Shard',
     desc = 'Shard - Basic Shard AI'
   },
