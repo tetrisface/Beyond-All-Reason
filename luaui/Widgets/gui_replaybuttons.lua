@@ -21,8 +21,10 @@ local mathFloor = math.floor
 -- Localized Spring API for performance
 local spGetGameFrame = Spring.GetGameFrame
 local spGetConfigInt = Spring.GetConfigInt
+local spSetConfigInt = Spring.SetConfigInt
 local spGetMouseState = Spring.GetMouseState
 local spGetReplayLength = Spring.GetReplayLength
+local spGetGameSpeed = Spring.GetGameSpeed
 local spGetViewGeometry = Spring.GetViewGeometry
 
 local vsx, vsy = spGetViewGeometry()
@@ -47,6 +49,8 @@ local widgetScale = (0.5 + (vsx * vsy / 5700000))
 local replayLengthFrames = 0
 local lastSkipFrame = -1
 local lastSkipClock = 0
+local lastRestoreFrame = -1
+local lastRestoreClock = 0
 local selfTestEnabled = spGetConfigInt("ReplayTimelineSelfTest", 0) == 1
 local selfTestStartFrame = spGetConfigInt("ReplayTimelineSelfTestStartFrame", 30)
 local selfTestTargetFrame = spGetConfigInt("ReplayTimelineSelfTestTargetFrame", 0)
@@ -56,6 +60,17 @@ local selfTestTriggered = false
 local selfTestReached = false
 local selfTestComplete = false
 local selfTestDeadlineFrame = 0
+local checkpointSelfTestEnabled = spGetConfigInt("ReplayCheckpointSelfTest", 0) == 1
+local checkpointSelfTestSaveFrame = spGetConfigInt("ReplayCheckpointSelfTestSaveFrame", 30)
+local checkpointSelfTestLoadFrame = spGetConfigInt("ReplayCheckpointSelfTestLoadFrame", 90)
+local checkpointSelfTestTargetFrame = spGetConfigInt("ReplayCheckpointSelfTestTargetFrame", 0)
+local checkpointSelfTestSkipSave = spGetConfigInt("ReplayCheckpointSelfTestSkipSave", 0) == 1
+local checkpointSelfTestResumeFrame = spGetConfigInt("ReplayCheckpointSelfTestResumeFrame", 0)
+local checkpointSelfTestQuit = spGetConfigInt("ReplayCheckpointSelfTestQuit", 0) == 1
+local checkpointSelfTestTimeoutSeconds = spGetConfigInt("ReplayCheckpointSelfTestTimeoutSeconds", 10)
+local checkpointSelfTestPhase = spGetConfigInt("ReplayCheckpointSelfTestPhase", 0)
+local checkpointSelfTestRequestFrame = spGetConfigInt("ReplayCheckpointSelfTestRequestFrame", 0)
+local checkpointSelfTestRequestClock = os.clock()
 
 local glBlending = gl.Blending
 local glColor = gl.Color
@@ -142,9 +157,16 @@ local function jump_to_frame(targetFrame, source)
 	end
 	targetFrame = math.max(1, math.min(replayLengthFrames, targetFrame))
 	if targetFrame <= currentFrame + 1 then
-		if source ~= "self-test" then
-			Spring.Echo("[Replay] Backward timeline jumps need checkpoint restore; forward jumps are available now.")
+		local now = os.clock()
+		if targetFrame == lastRestoreFrame and now - lastRestoreClock < 0.5 then
+			return
 		end
+		lastRestoreFrame = targetFrame
+		lastRestoreClock = now
+		if source ~= "self-test" then
+			Spring.Echo("[Replay] Requesting checkpoint restore to frame " .. targetFrame)
+		end
+		Spring.SendCommands("replaycheckpoint load " .. targetFrame)
 		return
 	end
 	local now = os.clock()
@@ -165,6 +187,160 @@ local function self_test_target_frame(currentFrame)
 		return math.max(1, math.min(replayLengthFrames, selfTestTargetFrame))
 	end
 	return math.max(1, math.min(replayLengthFrames, currentFrame + 300))
+end
+
+local function checkpoint_self_test_target_frame()
+	if checkpointSelfTestTargetFrame > 0 then
+		return math.max(1, checkpointSelfTestTargetFrame)
+	end
+	return math.max(1, checkpointSelfTestSaveFrame)
+end
+
+local function checkpoint_self_test_set_phase(phase)
+	checkpointSelfTestPhase = phase
+	if spSetConfigInt then
+		spSetConfigInt("ReplayCheckpointSelfTestPhase", phase)
+	end
+end
+
+local function checkpoint_self_test_mark_complete()
+	checkpoint_self_test_set_phase(5)
+	if checkpointSelfTestQuit then
+		Spring.SendCommands("quitforce")
+	end
+end
+
+local function checkpoint_self_test_game_frame(frame)
+	if not checkpointSelfTestEnabled or checkpointSelfTestPhase >= 5 then
+		return false
+	end
+
+	local targetFrame = checkpoint_self_test_target_frame()
+
+	if checkpointSelfTestPhase <= 0 and checkpointSelfTestSkipSave and frame >= checkpointSelfTestLoadFrame then
+		if targetFrame >= frame then
+			Spring.Echo("[ReplayCheckpointTest] failed current=" .. frame .. " target=" .. targetFrame .. " reason=no-backward-target")
+			checkpoint_self_test_mark_complete()
+			return true
+		end
+
+		checkpointSelfTestRequestFrame = frame
+		checkpointSelfTestRequestClock = os.clock()
+		if spSetConfigInt then
+			spSetConfigInt("ReplayCheckpointSelfTestRequestFrame", checkpointSelfTestRequestFrame)
+		end
+		checkpoint_self_test_set_phase(2)
+		isPaused = true
+		if buttons[#buttons] then
+			buttons[#buttons].text = "  >>"
+			sceduleUpdate = true
+		end
+		Spring.Echo("[ReplayCheckpointTest] prerecorded current=" .. frame .. " target=" .. targetFrame)
+		Spring.Echo("[ReplayCheckpointTest] load current=" .. frame .. " target=" .. targetFrame)
+		Spring.SendCommands("pause 1")
+		Spring.SendCommands("replaycheckpoint load " .. targetFrame)
+		return true
+	end
+
+	if checkpointSelfTestPhase <= 0 and frame >= checkpointSelfTestSaveFrame then
+		checkpoint_self_test_set_phase(1)
+		Spring.Echo("[ReplayCheckpointTest] save current=" .. frame .. " target=" .. targetFrame)
+		Spring.SendCommands("replaycheckpoint save -y")
+		return true
+	end
+
+	if checkpointSelfTestPhase == 1 and frame >= checkpointSelfTestLoadFrame then
+		if targetFrame >= frame then
+			Spring.Echo("[ReplayCheckpointTest] failed current=" .. frame .. " target=" .. targetFrame .. " reason=no-backward-target")
+			checkpoint_self_test_mark_complete()
+			return true
+		end
+
+		checkpointSelfTestRequestFrame = frame
+		checkpointSelfTestRequestClock = os.clock()
+		if spSetConfigInt then
+			spSetConfigInt("ReplayCheckpointSelfTestRequestFrame", checkpointSelfTestRequestFrame)
+		end
+		checkpoint_self_test_set_phase(2)
+		isPaused = true
+		if buttons[#buttons] then
+			buttons[#buttons].text = "  >>"
+			sceduleUpdate = true
+		end
+		Spring.Echo("[ReplayCheckpointTest] load current=" .. frame .. " target=" .. targetFrame)
+		Spring.SendCommands("pause 1")
+		Spring.SendCommands("replaycheckpoint load " .. targetFrame)
+		return true
+	end
+
+	if checkpointSelfTestPhase == 4 and checkpointSelfTestResumeFrame > 0 and frame >= checkpointSelfTestResumeFrame then
+		local _, _, paused = spGetGameSpeed()
+		Spring.Echo(
+			"[ReplayCheckpointTest] resumed current=" .. frame ..
+			" target=" .. targetFrame ..
+			" request=" .. checkpointSelfTestRequestFrame ..
+			" resume=" .. checkpointSelfTestResumeFrame ..
+			" paused=" .. (paused and "1" or "0")
+		)
+		checkpoint_self_test_mark_complete()
+		return true
+	end
+
+	return checkpointSelfTestPhase == 2 or checkpointSelfTestPhase == 4
+end
+
+local function checkpoint_self_test_update()
+	if not checkpointSelfTestEnabled or (checkpointSelfTestPhase ~= 2 and checkpointSelfTestPhase ~= 4) then
+		return
+	end
+
+	local currentFrame = spGetGameFrame()
+	local targetFrame = checkpoint_self_test_target_frame()
+	local _, _, paused = spGetGameSpeed()
+
+	if checkpointSelfTestPhase == 2 and currentFrame <= targetFrame + 1 and paused then
+		local elapsed = os.clock() - checkpointSelfTestRequestClock
+		Spring.Echo(
+			"[ReplayCheckpointTest] restored current=" .. currentFrame ..
+			" target=" .. targetFrame ..
+			" request=" .. checkpointSelfTestRequestFrame ..
+			" paused=1 elapsed=" .. string.format("%.2f", elapsed)
+		)
+		if checkpointSelfTestResumeFrame > targetFrame + 1 then
+			checkpointSelfTestRequestClock = os.clock()
+			checkpoint_self_test_set_phase(4)
+			isPaused = false
+			if buttons[#buttons] then
+				buttons[#buttons].text = "  ||"
+				sceduleUpdate = true
+			end
+			Spring.Echo(
+				"[ReplayCheckpointTest] resume-start current=" .. currentFrame ..
+				" target=" .. targetFrame ..
+				" request=" .. checkpointSelfTestRequestFrame ..
+				" resume=" .. checkpointSelfTestResumeFrame
+			)
+			Spring.SendCommands("pause 0")
+			return
+		end
+		checkpoint_self_test_mark_complete()
+		return
+	end
+
+	if os.clock() - checkpointSelfTestRequestClock > checkpointSelfTestTimeoutSeconds then
+		local reason = "timeout"
+		if checkpointSelfTestPhase == 4 then
+			reason = "resume-timeout"
+		end
+		Spring.Echo(
+			"[ReplayCheckpointTest] failed current=" .. currentFrame ..
+			" target=" .. targetFrame ..
+			" request=" .. checkpointSelfTestRequestFrame ..
+			" paused=" .. (paused and "1" or "0") ..
+			" reason=" .. reason
+		)
+		checkpoint_self_test_mark_complete()
+	end
 end
 
 local function draw_timeline()
@@ -346,9 +522,14 @@ end
 function widget:Update(dt)
 	prevIsActive = isActive
 	isActive = #Spring.GetSelectedUnits() == 0
+	checkpoint_self_test_update()
 end
 
 function widget:GameFrame(frame)
+	if checkpoint_self_test_game_frame(frame) then
+		return
+	end
+
 	if not selfTestEnabled or selfTestComplete then
 		return
 	end
