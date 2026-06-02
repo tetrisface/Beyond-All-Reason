@@ -1,4 +1,9 @@
 local gadget = gadget ---@type Gadget
+local modOptions = Spring.GetModOptions()
+
+local function ToBool(value)
+	return value == true or value == "1" or value == "true"
+end
 
 function gadget:GetInfo()
 	return {
@@ -69,6 +74,10 @@ if gadgetHandler:IsSyncedCode() then
 	local areaOffsetX = 0.0
 	local areaOffsetZ = 0.0
 	local unitMultiplier = 1.0
+	local autoStart = ToBool(modOptions.synctest_autostart)
+	local autoGameOver = ToBool(modOptions.synctest_gameover)
+	local autoStarted = false
+	local autoStartFrame = tonumber(modOptions.synctest_start_frame) or 1
 
 	local seededrand = {}
 	local randindex = 1
@@ -161,6 +170,9 @@ if gadgetHandler:IsSyncedCode() then
 		Spring.Echo(string.format("[synctest] ending after %d frames", Spring.GetGameFrame() - runStartFrame))
 		removeAllSpawnedUnits()
 		SendToUnsynced("synctest_synchash_end")
+		if autoGameOver then
+			Spring.GameOver({ 0 })
+		end
 	end
 
 	local function toggleRun(words)
@@ -172,6 +184,18 @@ if gadgetHandler:IsSyncedCode() then
 	--------------------------------------------------------------------
 
 	function gadget:GameFrame(n)
+		if autoStart and not autoStarted and n >= autoStartFrame then
+			autoStarted = true
+			startRun({
+				"synctest",
+				modOptions.synctest_total_frames,
+				modOptions.synctest_area_fraction,
+				modOptions.synctest_area_offset_x,
+				modOptions.synctest_area_offset_z,
+				modOptions.synctest_unit_multiplier,
+			})
+		end
+
 		if not active then return end
 
 		local runFrame = n - runStartFrame
@@ -511,7 +535,6 @@ else	-- UNSYNCED
 			checksums[i] = { frame = frameBuffer[i], checksum = checksumBuffer[i] }
 		end
 
-		local path = "synctest_synchash.json"
 		local content = Json.encode({
 			digest = digest,
 			frameCount = count,
@@ -520,16 +543,16 @@ else	-- UNSYNCED
 			checksums = checksums,
 		})
 
-		local f, err = io.open(path, "w")
-		if not f then
-			Spring.Echo("[synctest] sync-hash: failed to open " .. tostring(path) .. ": " .. tostring(err))
-			return
+		local chunkSize = 12000
+		local totalChunks = math.ceil(#content / chunkSize)
+		for i = 1, totalChunks do
+			local startIndex = ((i - 1) * chunkSize) + 1
+			local chunk = string.sub(content, startIndex, startIndex + chunkSize - 1)
+			Spring.Echo(string.format("[synctest] sync-hash-json-chunk %d/%d: %s", i, totalChunks, chunk))
 		end
-		f:write(content)
-		f:close()
 		Spring.Echo(string.format(
-			"[synctest] sync-hash: wrote %s (md5=%s, %d frames %d..%d)",
-			path, digest, count, synchashFirstFrame or -1, synchashLastFrame or -1))
+			"[synctest] sync-hash: wrote synctest_synchash.json to log (md5=%s, %d frames %d..%d)",
+			digest, count, synchashFirstFrame or -1, synchashLastFrame or -1))
 		frameBuffer = {}
 		checksumBuffer = {}
 	end

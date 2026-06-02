@@ -20,7 +20,9 @@ local mathFloor = math.floor
 
 -- Localized Spring API for performance
 local spGetGameFrame = Spring.GetGameFrame
+local spGetConfigInt = Spring.GetConfigInt
 local spGetMouseState = Spring.GetMouseState
+local spGetReplayLength = Spring.GetReplayLength
 local spGetViewGeometry = Spring.GetViewGeometry
 
 local vsx, vsy = spGetViewGeometry()
@@ -36,13 +38,28 @@ local bHeight = buttonHeight * ui_scale
 local buttons = {}
 local speeds = { 0.5, 1, 2, 3, 4, 6, 8, 10, 15, 20 }
 local wPos = { x = 0.00, y = 0.145 }
+local timeline = { x = 0.24, y = 0.022, w = 0.52, h = 0.018 }
 local isPaused = false
 local isActive = false
 local prevIsActive = false
 local sceduleUpdate = true
 local widgetScale = (0.5 + (vsx * vsy / 5700000))
+local replayLengthFrames = 0
+local lastSkipFrame = -1
+local lastSkipClock = 0
+local selfTestEnabled = spGetConfigInt("ReplayTimelineSelfTest", 0) == 1
+local selfTestStartFrame = spGetConfigInt("ReplayTimelineSelfTestStartFrame", 30)
+local selfTestTargetFrame = spGetConfigInt("ReplayTimelineSelfTestTargetFrame", 0)
+local selfTestQuit = spGetConfigInt("ReplayTimelineSelfTestQuit", 0) == 1
+local selfTestQuitFrame = spGetConfigInt("ReplayTimelineSelfTestQuitFrame", 0)
+local selfTestTriggered = false
+local selfTestReached = false
+local selfTestComplete = false
+local selfTestDeadlineFrame = 0
 
 local glBlending = gl.Blending
+local glColor = gl.Color
+local glRect = gl.Rect
 local GL_SRC_ALPHA = GL.SRC_ALPHA
 local GL_ONE_MINUS_SRC_ALPHA = GL.ONE_MINUS_SRC_ALPHA
 local GL_ONE = GL.ONE
@@ -50,6 +67,17 @@ local GL_ONE = GL.ONE
 local RectRound, UiButton, elementCorner
 
 local font, backgroundGuishader, buttonsList, buttonlist, active_button, bgpadding
+
+local function seconds_to_clock(seconds)
+	seconds = math.max(0, mathFloor(seconds or 0))
+	local hours = mathFloor(seconds / 3600)
+	local mins = mathFloor((seconds - hours * 3600) / 60)
+	local secs = seconds - hours * 3600 - mins * 60
+	if hours > 0 then
+		return string.format("%d:%02d:%02d", hours, mins, secs)
+	end
+	return string.format("%02d:%02d", mins, secs)
+end
 
 local function add_button(x, y, text, name)
 	local new_button = {}
@@ -82,6 +110,96 @@ end
 
 local function setReplaySpeed(speed)
 	Spring.SendCommands("setspeed " .. speed)
+end
+
+local function update_replay_length()
+	local seconds = spGetReplayLength and spGetReplayLength()
+	if seconds and seconds > 0 then
+		replayLengthFrames = math.max(replayLengthFrames, mathFloor(seconds * 30))
+	end
+end
+
+local function timeline_rect_pixels()
+	local x1 = mathFloor((timeline.x * vsx) + 0.5)
+	local y1 = mathFloor((timeline.y * vsy) + 0.5)
+	local x2 = mathFloor(((timeline.x + timeline.w) * vsx) + 0.5)
+	local y2 = mathFloor(((timeline.y + timeline.h) * vsy) + 0.5)
+	return x1, y1, x2, y2
+end
+
+local function frame_from_timeline_x(x)
+	local x1, _, x2 = timeline_rect_pixels()
+	local t = (x - x1) / math.max(1, x2 - x1)
+	t = math.max(0, math.min(1, t))
+	return mathFloor(t * replayLengthFrames + 0.5)
+end
+
+local function jump_to_frame(targetFrame, source)
+	update_replay_length()
+	local currentFrame = spGetGameFrame()
+	if replayLengthFrames <= 0 then
+		return
+	end
+	targetFrame = math.max(1, math.min(replayLengthFrames, targetFrame))
+	if targetFrame <= currentFrame + 1 then
+		if source ~= "self-test" then
+			Spring.Echo("[Replay] Backward timeline jumps need checkpoint restore; forward jumps are available now.")
+		end
+		return
+	end
+	local now = os.clock()
+	if targetFrame == lastSkipFrame and now - lastSkipClock < 0.5 then
+		return
+	end
+	lastSkipFrame = targetFrame
+	lastSkipClock = now
+	Spring.SendCommands("skip f" .. targetFrame)
+end
+
+local function self_test_target_frame(currentFrame)
+	update_replay_length()
+	if replayLengthFrames <= 0 then
+		return 0
+	end
+	if selfTestTargetFrame > 0 then
+		return math.max(1, math.min(replayLengthFrames, selfTestTargetFrame))
+	end
+	return math.max(1, math.min(replayLengthFrames, currentFrame + 300))
+end
+
+local function draw_timeline()
+	update_replay_length()
+	if replayLengthFrames <= 0 then
+		return
+	end
+
+	local currentFrame = spGetGameFrame()
+	local progress = math.max(0, math.min(1, currentFrame / replayLengthFrames))
+	local x1, y1, x2, y2 = timeline_rect_pixels()
+	local fillX = mathFloor(x1 + (x2 - x1) * progress + 0.5)
+	local markerW = math.max(2, mathFloor(2 * ui_scale + 0.5))
+
+	glColor(0, 0, 0, ui_opacity * 0.78)
+	glRect(x1 - bgpadding, y1 - bgpadding, x2 + bgpadding, y2 + bgpadding)
+	glColor(0.13, 0.14, 0.15, ui_opacity)
+	glRect(x1, y1, x2, y2)
+	glColor(0.20, 0.72, 0.92, 0.88)
+	glRect(x1, y1, fillX, y2)
+	glColor(1, 1, 1, 0.9)
+	glRect(fillX - markerW, y1 - bgpadding * 0.25, fillX + markerW, y2 + bgpadding * 0.25)
+	glColor(1, 1, 1, 1)
+
+	font:Begin()
+	font:SetTextColor(1, 1, 1, 0.92)
+	font:SetOutlineColor(0, 0, 0, 0.8)
+	font:Print(
+		seconds_to_clock(currentFrame / 30) .. " / " .. seconds_to_clock(replayLengthFrames / 30),
+		x2 + mathFloor(8 * ui_scale + 0.5),
+		y1 + mathFloor((y2 - y1) * 0.5 + 0.5),
+		mathFloor(12 * ui_scale + 0.5),
+		"vo"
+	)
+	font:End()
 end
 
 local function draw_buttons(b)
@@ -169,6 +287,7 @@ function widget:DrawScreen()
 	if buttonsList then
 		gl.CallList(buttonsList)
 	end
+	draw_timeline()
 	local mousex, mousey, buttonstate = spGetMouseState()
 	local b = buttons
 	local topbutton = #buttons-1
@@ -197,6 +316,14 @@ function widget:MousePress(x, y, button)
 		return
 	end
 
+	if button == 1 then
+		local x1, y1, x2, y2 = timeline_rect_pixels()
+		if point_in_rect(x1, y1, x2, y2, x, y) then
+			jump_to_frame(frame_from_timeline_x(x))
+			return true
+		end
+	end
+
 	local cb, i = clicked_button(buttons)
 	if cb == "playpauseskip" then
 		if spGetGameFrame() > 1 then
@@ -219,6 +346,62 @@ end
 function widget:Update(dt)
 	prevIsActive = isActive
 	isActive = #Spring.GetSelectedUnits() == 0
+end
+
+function widget:GameFrame(frame)
+	if not selfTestEnabled or selfTestComplete then
+		return
+	end
+
+	if not selfTestTriggered and frame >= selfTestStartFrame then
+		local targetFrame = self_test_target_frame(frame)
+		if targetFrame <= frame + 1 then
+			Spring.Echo("[ReplayTimelineTest] failed current=" .. frame .. " target=" .. targetFrame .. " reason=no-forward-target")
+			selfTestReached = true
+			selfTestComplete = true
+			if selfTestQuit then
+				Spring.SendCommands("quitforce")
+			end
+			return
+		end
+
+		selfTestTriggered = true
+		selfTestTargetFrame = targetFrame
+		selfTestDeadlineFrame = targetFrame + 300
+		Spring.Echo("[ReplayTimelineTest] start current=" .. frame .. " target=" .. targetFrame .. " length=" .. replayLengthFrames)
+		jump_to_frame(targetFrame, "self-test")
+		return
+	end
+
+	if selfTestTriggered and not selfTestReached and frame >= selfTestTargetFrame and selfTestTargetFrame > 0 then
+		selfTestReached = true
+		Spring.Echo("[ReplayTimelineTest] reached current=" .. frame .. " target=" .. selfTestTargetFrame)
+		if selfTestQuit and (selfTestQuitFrame <= frame or selfTestQuitFrame <= 0) then
+			selfTestComplete = true
+			Spring.SendCommands("quitforce")
+		elseif selfTestQuit then
+			Spring.Echo("[ReplayTimelineTest] continue current=" .. frame .. " target=" .. selfTestTargetFrame .. " quit_frame=" .. selfTestQuitFrame)
+		else
+			selfTestComplete = true
+		end
+		return
+	end
+
+	if selfTestReached and selfTestQuit and selfTestQuitFrame > 0 and frame >= selfTestQuitFrame then
+		selfTestComplete = true
+		Spring.Echo("[ReplayTimelineTest] post-target current=" .. frame .. " target=" .. selfTestTargetFrame .. " quit_frame=" .. selfTestQuitFrame)
+		Spring.SendCommands("quitforce")
+		return
+	end
+
+	if selfTestTriggered and selfTestDeadlineFrame > 0 and frame > selfTestDeadlineFrame then
+		selfTestReached = true
+		selfTestComplete = true
+		Spring.Echo("[ReplayTimelineTest] failed current=" .. frame .. " target=" .. selfTestTargetFrame .. " reason=deadline")
+		if selfTestQuit then
+			Spring.SendCommands("quitforce")
+		end
+	end
 end
 
 function widget:GameStart()
