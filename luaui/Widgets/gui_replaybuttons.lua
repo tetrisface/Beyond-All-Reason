@@ -64,7 +64,8 @@ local checkpointSelfTestEnabled = spGetConfigInt("ReplayCheckpointSelfTest", 0) 
 local checkpointSelfTestSaveFrame = spGetConfigInt("ReplayCheckpointSelfTestSaveFrame", 30)
 local checkpointSelfTestLoadFrame = spGetConfigInt("ReplayCheckpointSelfTestLoadFrame", 90)
 local checkpointSelfTestTargetFrame = spGetConfigInt("ReplayCheckpointSelfTestTargetFrame", 0)
-local checkpointSelfTestSkipSave = spGetConfigInt("ReplayCheckpointSelfTestSkipSave", 0) == 1
+local checkpointSelfTestSkipSave =
+	spGetConfigInt("ReplayCheckpointUseBundle", spGetConfigInt("ReplayCheckpointSelfTestSkipSave", 0)) == 1
 local checkpointSelfTestResumeFrame = spGetConfigInt("ReplayCheckpointSelfTestResumeFrame", 0)
 local checkpointSelfTestQuit = spGetConfigInt("ReplayCheckpointSelfTestQuit", 0) == 1
 local checkpointSelfTestTimeoutSeconds = spGetConfigInt("ReplayCheckpointSelfTestTimeoutSeconds", 10)
