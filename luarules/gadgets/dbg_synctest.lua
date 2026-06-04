@@ -78,6 +78,7 @@ if gadgetHandler:IsSyncedCode() then
 	local autoGameOver = ToBool(modOptions.synctest_gameover)
 	local autoStarted = false
 	local autoStartFrame = tonumber(modOptions.synctest_start_frame) or 1
+	local debugSignatureFrame = Spring.GetConfigInt and Spring.GetConfigInt("ReplayCheckpointDebugSignatureFrame", -1) or -1
 
 	local seededrand = {}
 	local randindex = 1
@@ -179,6 +180,14 @@ if gadgetHandler:IsSyncedCode() then
 		if active then endRun() else startRun(words) end
 	end
 
+	local function countMapKeys(map)
+		local count = 0
+		for _ in pairs(map) do
+			count = count + 1
+		end
+		return count
+	end
+
 	--------------------------------------------------------------------
 	-- Main tick
 	--------------------------------------------------------------------
@@ -199,6 +208,11 @@ if gadgetHandler:IsSyncedCode() then
 		if not active then return end
 
 		local runFrame = n - runStartFrame
+		if debugSignatureFrame >= 0 and n == debugSignatureFrame then
+			Spring.Echo(string.format(
+				"[synctest][sig] frame=%d runFrame=%d runStart=%d randindex=%d categories=%d featurestoremove=%d",
+				n, runFrame, runStartFrame, randindex, #enabledCats, countMapKeys(featurestoremove)))
+		end
 
 		if runFrame % feedMod == 0 then
 			for _, cat in ipairs(enabledCats) do

@@ -13,11 +13,17 @@ function widget:GetInfo()
 	}
 end
 
-local getConfigInt = Spring.GetConfigInt
-local isReplay = Spring.IsReplay and Spring.IsReplay()
-local disableDevReloaders = getConfigInt and getConfigInt("ReplayCheckpointDisableDevReloaders", 0) == 1
-local isDevMode = Spring.Utilities and Spring.Utilities.IsDevMode and Spring.Utilities.IsDevMode()
-if disableDevReloaders or isReplay or not isDevMode then -- and not Spring.Utilities.ShowDevUI() then
+local function ShouldDisableDevReloader()
+	local getConfigInt = Spring.GetConfigInt
+	local disableDevReloaders = getConfigInt and getConfigInt("ReplayCheckpointDisableDevReloaders", 0) == 1
+	local modOptions = Spring.GetModOptions and Spring.GetModOptions()
+	local disableDevReloadersMod = modOptions and tonumber(modOptions.replaycheckpoint_disable_dev_reloaders or 0) == 1
+	local isReplay = Spring.IsReplay and Spring.IsReplay()
+	local isDevMode = Spring.Utilities and Spring.Utilities.IsDevMode and Spring.Utilities.IsDevMode()
+	return disableDevReloaders or disableDevReloadersMod or isReplay or not isDevMode
+end
+
+if ShouldDisableDevReloader() then -- and not Spring.Utilities.ShowDevUI() then
 	return false
 end
 
@@ -32,6 +38,9 @@ local widgetDependents = {} -- maps widgetname to {dependentName1, ...}
 local mouseOffscreen = select(6, spGetMouseState())
 
 function widget:Initialize()
+	if ShouldDisableDevReloader() then
+		return
+	end
 	local widgets = widgetHandler.widgets
 	for _, widget in pairs(widgets) do
 		local whInfo = widget.whInfo
@@ -80,6 +89,9 @@ end
 local lastUpdate = Spring.GetTimer()
 local updateQueue = {}
 function widget:Update()
+	if ShouldDisableDevReloader() then
+		return
+	end
 	local widgetName, fileName = next(updateQueue)
 	if widgetName then
 		local startTime = Spring.GetTimer()

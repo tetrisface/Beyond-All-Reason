@@ -13,11 +13,17 @@ function gadget:GetInfo()
 	}
 end
 
-local getConfigInt = Spring.GetConfigInt
-local isReplay = Spring.IsReplay and Spring.IsReplay()
-local disableDevReloaders = getConfigInt and getConfigInt("ReplayCheckpointDisableDevReloaders", 0) == 1
-local isDevMode = Spring.Utilities and Spring.Utilities.IsDevMode and Spring.Utilities.IsDevMode()
-if disableDevReloaders or isReplay or not isDevMode then
+local function ShouldDisableDevReloader()
+	local getConfigInt = Spring.GetConfigInt
+	local disableDevReloaders = getConfigInt and getConfigInt("ReplayCheckpointDisableDevReloaders", 0) == 1
+	local modOptions = Spring.GetModOptions and Spring.GetModOptions()
+	local disableDevReloadersMod = modOptions and tonumber(modOptions.replaycheckpoint_disable_dev_reloaders or 0) == 1
+	local isReplay = Spring.IsReplay and Spring.IsReplay()
+	local isDevMode = Spring.Utilities and Spring.Utilities.IsDevMode and Spring.Utilities.IsDevMode()
+	return disableDevReloaders or disableDevReloadersMod or isReplay or not isDevMode
+end
+
+if ShouldDisableDevReloader() then
 	return false
 end
 
@@ -104,12 +110,18 @@ if gadgetHandler:IsSyncedCode() then
 	local updateQueue = {}
 
 	function gadget:Initialize()
+		if ShouldDisableDevReloader() then
+			return
+		end
 		CacheGadgets()
 	end
 
 	local lastCheckFrame = 0
 	local lastFullScanFrame = 0
 	function gadget:GameFrame(frame)
+		if ShouldDisableDevReloader() then
+			return
+		end
 		if next(pendingReHook) then
 			for name in pairs(pendingReHook) do
 				ReHookProfiler(name)
@@ -149,12 +161,18 @@ else
 	local mouseOffscreen = select(6, spGetMouseState())
 
 	function gadget:Initialize()
+		if ShouldDisableDevReloader() then
+			return
+		end
 		CacheGadgets()
 	end
 
 	local timeSinceCheck = 0
 	local updateQueue = {}
 	function gadget:Update(dt)
+		if ShouldDisableDevReloader() then
+			return
+		end
 		if next(pendingReHook) then
 			for name in pairs(pendingReHook) do
 				ReHookProfiler(name)
