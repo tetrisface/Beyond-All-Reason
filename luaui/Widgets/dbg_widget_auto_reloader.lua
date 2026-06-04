@@ -1,7 +1,3 @@
-if not Spring.Utilities.IsDevMode() then -- and not Spring.Utilities.ShowDevUI() then
-	return
-end
-
 local widget = widget ---@type Widget
 
 function widget:GetInfo()
@@ -15,6 +11,14 @@ function widget:GetInfo()
 		enabled = true, --  loaded by default?
 		handler = true, -- so it can remove and add widgets
 	}
+end
+
+local getConfigInt = Spring.GetConfigInt
+local isReplay = Spring.IsReplay and Spring.IsReplay()
+local disableDevReloaders = getConfigInt and getConfigInt("ReplayCheckpointDisableDevReloaders", 0) == 1
+local isDevMode = Spring.Utilities and Spring.Utilities.IsDevMode and Spring.Utilities.IsDevMode()
+if disableDevReloaders or isReplay or not isDevMode then -- and not Spring.Utilities.ShowDevUI() then
+	return false
 end
 
 

@@ -1,7 +1,3 @@
-if not Spring.Utilities.IsDevMode() then
-	return
-end
-
 local gadget = gadget ---@type Gadget
 
 function gadget:GetInfo()
@@ -15,6 +11,14 @@ function gadget:GetInfo()
 		enabled = true,
 		handler = true,
 	}
+end
+
+local getConfigInt = Spring.GetConfigInt
+local isReplay = Spring.IsReplay and Spring.IsReplay()
+local disableDevReloaders = getConfigInt and getConfigInt("ReplayCheckpointDisableDevReloaders", 0) == 1
+local isDevMode = Spring.Utilities and Spring.Utilities.IsDevMode and Spring.Utilities.IsDevMode()
+if disableDevReloaders or isReplay or not isDevMode then
+	return false
 end
 
 local SELF_NAME = "Gadget Auto Reloader"
