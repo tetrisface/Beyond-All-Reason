@@ -503,6 +503,17 @@ else	-- UNSYNCED
 	local checkpointSelfTestTimeoutSeconds = spGetConfigInt and spGetConfigInt("ReplayCheckpointSelfTestTimeoutSeconds", 10) or 10
 	local checkpointSelfTestPhase = spGetConfigInt and spGetConfigInt("ReplayCheckpointSelfTestPhase", 0) or 0
 	local checkpointSelfTestRequestFrame = spGetConfigInt and spGetConfigInt("ReplayCheckpointSelfTestRequestFrame", 0) or 0
+	local checkpointSelfTestRestartSynchash = spGetConfigInt and spGetConfigInt("ReplayCheckpointSelfTestRestartSynchash", 0) == 1
+	local defaultSynchashRunStartFrame = tonumber(modOptions.synctest_start_frame) or 1
+	local defaultSynchashTotalFrames = tonumber(modOptions.synctest_total_frames) or 0
+	local checkpointSelfTestSynchashRunStartFrame = spGetConfigInt and spGetConfigInt(
+		"ReplayCheckpointSelfTestSynchashRunStartFrame",
+		defaultSynchashRunStartFrame
+	) or defaultSynchashRunStartFrame
+	local checkpointSelfTestSynchashTotalFrames = spGetConfigInt and spGetConfigInt(
+		"ReplayCheckpointSelfTestSynchashTotalFrames",
+		defaultSynchashTotalFrames
+	) or defaultSynchashTotalFrames
 	local checkpointSelfTestRequestClock = os.clock()
 
 	function gadget:ViewResize()
@@ -679,6 +690,23 @@ else	-- UNSYNCED
 		hudRunStartFrame = tonumber(runStartFrame) or Spring.GetGameFrame()
 	end
 
+	local function restartSynchashAfterCheckpointRestore()
+		if not checkpointSelfTestRestartSynchash then return end
+		if checkpointSelfTestPhase ~= 2 and checkpointSelfTestPhase ~= 4 then return end
+
+		onSynchashBegin(
+			"synctest_synchash_begin",
+			checkpointSelfTestSynchashTotalFrames,
+			checkpointSelfTestSynchashRunStartFrame
+		)
+		Spring.Echo(string.format(
+			"[synctest] sync-hash: restarted after replay checkpoint restore at frame %d runStart=%d totalFrames=%d",
+			Spring.GetGameFrame(),
+			checkpointSelfTestSynchashRunStartFrame,
+			checkpointSelfTestSynchashTotalFrames
+		))
+	end
+
 	function gadget:GameFrame(n)
 		checkpointSelfTestGameFrame(n)
 
@@ -755,6 +783,7 @@ else	-- UNSYNCED
 		gadgetHandler:AddChatAction('synctest', synctest, "")
 		gadgetHandler:AddSyncAction('synctest_synchash_begin', onSynchashBegin)
 		gadgetHandler:AddSyncAction('synctest_synchash_end',   onSynchashEnd)
+		restartSynchashAfterCheckpointRestore()
 	end
 
 	function gadget:Shutdown()
