@@ -15,6 +15,8 @@ end
 
 -- Localized Spring API for performance
 local spEcho = Spring.Echo
+local spGetConfigInt = Spring.GetConfigInt
+local spGetGameFrame = Spring.GetGameFrame
 local spGetViewGeometry = Spring.GetViewGeometry
 
 -------   Configurables: -------------------
@@ -173,7 +175,10 @@ local function DrawLOSStencil() -- about 0.025 ms
 	end
 end
 
+local IsReplayCheckpointVisualCleanupActive
+
 function widget:DrawGenesis()
+	if IsReplayCheckpointVisualCleanupActive() then return end
     gl.RenderToTexture(losStencilTexture, DrawLOSStencil)
 end
 
@@ -219,10 +224,44 @@ end
 
 -- a reusable table, since we will literally only modify its first element.
 local instanceCache = {0,0,0,0,0,0,0,0}
+local pendingVisibleUnitsRefresh = false
+
+function IsReplayCheckpointVisualCleanupActive()
+	if spGetConfigInt("ReplayCheckpointVisualCleanup", 1) ~= 1 then
+		return false
+	end
+	local restoreSerial = spGetConfigInt("ReplayCheckpointRestoreSerial", 0) or 0
+	if restoreSerial <= 0 then
+		return false
+	end
+	local restoreFrame = spGetConfigInt("ReplayCheckpointRestoreFrame", -1) or -1
+	if restoreFrame < 0 then
+		return false
+	end
+	local curFrame = spGetGameFrame()
+	if curFrame < restoreFrame then
+		return false
+	end
+	local cleanupUntilFrame = spGetConfigInt("ReplayCheckpointSensorRangeCleanupUntilFrame", -1) or -1
+	if cleanupUntilFrame < 0 then
+		cleanupUntilFrame = restoreFrame + (spGetConfigInt("ReplayCheckpointSensorRangeCleanupFrames", 300) or 300)
+	end
+	local visualCleanupUntilFrame = spGetConfigInt("ReplayCheckpointVisualCleanupUntilFrame", -1) or -1
+	if visualCleanupUntilFrame > cleanupUntilFrame then
+		cleanupUntilFrame = visualCleanupUntilFrame
+	end
+	return curFrame <= cleanupUntilFrame
+end
 
 local function InitializeUnits()
 	--spEcho("Sensor Ranges LOS InitializeUnits")
 	InstanceVBOTable.clearInstanceTable(circleInstanceVBO)
+	if IsReplayCheckpointVisualCleanupActive() then
+		pendingVisibleUnitsRefresh = true
+		InstanceVBOTable.uploadAllElements(circleInstanceVBO)
+		spEcho("[ReplayCheckpoint] Sensor Ranges LOS skipped restore initialize during visual cleanup")
+		return
+	end
 	if WG['unittrackerapi'] and WG['unittrackerapi'].visibleUnits then
 		local visibleUnits =  WG['unittrackerapi'].visibleUnits
 		for unitID, unitDefID in pairs(visibleUnits) do
@@ -267,6 +306,10 @@ end
 
 function widget:VisibleUnitAdded(unitID, unitDefID, unitTeam, reason,  noupload)
 	--spEcho("widget:VisibleUnitAdded",unitID, unitDefID, unitTeam, reason, noupload)
+	if IsReplayCheckpointVisualCleanupActive() then
+		pendingVisibleUnitsRefresh = true
+		return
+	end
 	unitTeam = unitTeam or spGetUnitTeam(unitID)
 	noupload = noupload == true
 	if unitRange[unitDefID] == nil or unitTeam == gaiaTeamID then return end
@@ -297,14 +340,27 @@ function widget:VisibleUnitsChanged(extVisibleUnits, extNumVisibleUnits)
 end
 
 function widget:VisibleUnitRemoved(unitID)
+	if IsReplayCheckpointVisualCleanupActive() then
+		pendingVisibleUnitsRefresh = true
+		return
+	end
 	if circleInstanceVBO.instanceIDtoIndex[unitID] then
 		popElementInstance(circleInstanceVBO, unitID)
 	end
 end
 
+function widget:Update(dt)
+	if not pendingVisibleUnitsRefresh then return end
+	if IsReplayCheckpointVisualCleanupActive() then return end
+	pendingVisibleUnitsRefresh = false
+	InitializeUnits()
+	spEcho("[ReplayCheckpoint] Sensor Ranges LOS rebuilt range state after visual cleanup")
+end
+
 function widget:DrawWorld()
 	--if spec and fullview then return end
 	if Spring.IsGUIHidden() or 
+		IsReplayCheckpointVisualCleanupActive() or
 		(circleInstanceVBO.usedElements == 0) or
 		(opacity <= 0.01)
 	then return end

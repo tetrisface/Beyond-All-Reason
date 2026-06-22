@@ -445,6 +445,8 @@ local GL_REPLACE = GL.REPLACE --GL.KEEP
 local spGetPositionLosState = Spring.GetPositionLosState
 local spGetUnitDefID        = Spring.GetUnitDefID
 local spGetUnitPosition     = Spring.GetUnitPosition
+local spGetConfigInt        = Spring.GetConfigInt
+local spGetGameFrame        = Spring.GetGameFrame
 
 local chobbyInterface
 
@@ -501,6 +503,8 @@ for allyenemy, ringclasses in pairs(buttonConfig) do
 end
 --local defenseRangeClasses = {'enemyair','enemyground','enemynuke','allyair','allyground','allynuke', 'enemycannon', 'allycannon'}
 local defenseRangeVAOs = {}
+local buildUnitDefID = nil
+local buildDrawOverride = { ground = false, air = false, nuke = false , cannon = false, lrpc = false}
 
 local circleInstanceVBOLayout = {
 		  {id = 1, name = 'posscale', size = 4}, -- abs pos for static units, offset for dynamic units, scale is actual range, Y is turretheight
@@ -519,6 +523,8 @@ local popElementInstance     = InstanceVBOTable.popElementInstance
 local getElementInstanceData = InstanceVBOTable.getElementInstanceData
 
 local defenseRangeShader = nil
+local replayCheckpointRangeCleanupSerial = 0
+local replayCheckpointRangeRebuildSerial = 0
 
 local shaderSourceCache = {
 	shaderName = 'Defense Range GL4',
@@ -579,6 +585,74 @@ local function initGL4()
 	return makeShaders()
 end
 
+local function replay_checkpoint_range_cleanup_active()
+	if spGetConfigInt("ReplayCheckpointVisualCleanup", 1) ~= 1 then
+		return false
+	end
+
+	local restoreSerial = spGetConfigInt("ReplayCheckpointRestoreSerial", 0)
+	if restoreSerial <= 0 then
+		return false
+	end
+
+	local restoreFrame = spGetConfigInt("ReplayCheckpointRestoreFrame", -1)
+	if restoreFrame < 0 then
+		return false
+	end
+
+	local cleanupFrames = spGetConfigInt("ReplayCheckpointRangeCleanupFrames", 300)
+	local cleanupUntilFrame = mathMax(
+		spGetConfigInt("ReplayCheckpointRangeCleanupUntilFrame", restoreFrame + cleanupFrames),
+		spGetConfigInt("ReplayCheckpointVisualCleanupUntilFrame", restoreFrame + 5),
+		restoreFrame + cleanupFrames
+	)
+	local curFrame = spGetGameFrame()
+	if curFrame < restoreFrame or curFrame > cleanupUntilFrame then
+		return false
+	end
+
+	return true, restoreSerial, restoreFrame, cleanupUntilFrame
+end
+
+local function clear_replay_checkpoint_defense_range_state(restoreSerial, restoreFrame, cleanupUntilFrame)
+	defenses = {}
+	enemydefenses = {}
+	defensePosHash = {}
+	mobileAntiUnits = {}
+	buildUnitDefID = nil
+	for ringType in pairs(buildDrawOverride) do
+		buildDrawOverride[ringType] = false
+	end
+
+	for _, instanceTable in pairs(defenseRangeVAOs) do
+		InstanceVBOTable.clearInstanceTable(instanceTable)
+		InstanceVBOTable.uploadAllElements(instanceTable)
+	end
+
+	if replayCheckpointRangeCleanupSerial ~= restoreSerial then
+		replayCheckpointRangeCleanupSerial = restoreSerial
+		spEcho(string.format(
+			"[ReplayCheckpoint] Defense Range GL4 cleared range state after restore serial %d at frame %d until frame %d",
+			restoreSerial,
+			restoreFrame,
+			cleanupUntilFrame
+		))
+	end
+end
+
+local function rebuild_replay_checkpoint_defense_ranges_after_cleanup()
+	local restoreSerial = spGetConfigInt("ReplayCheckpointRestoreSerial", 0)
+	if restoreSerial <= 0 or replayCheckpointRangeCleanupSerial ~= restoreSerial or replayCheckpointRangeRebuildSerial == restoreSerial then
+		return
+	end
+
+	if WG['unittrackerapi'] and WG['unittrackerapi'].visibleUnits then
+		replayCheckpointRangeRebuildSerial = restoreSerial
+		widget:VisibleUnitsChanged(WG['unittrackerapi'].visibleUnits, nil)
+		spEcho("[ReplayCheckpoint] Defense Range GL4 rebuilt range state after restore serial " .. restoreSerial)
+	end
+end
+
 function widget:Initialize()
 	initUnitList()
 
@@ -612,7 +686,12 @@ function widget:Initialize()
 	numallyteams = #allyteamlist
 
 	if WG['unittrackerapi'] and WG['unittrackerapi'].visibleUnits then
-		widget:VisibleUnitsChanged(WG['unittrackerapi'].visibleUnits, nil)
+		local cleanupActive, restoreSerial, restoreFrame, cleanupUntilFrame = replay_checkpoint_range_cleanup_active()
+		if cleanupActive then
+			clear_replay_checkpoint_defense_range_state(restoreSerial, restoreFrame, cleanupUntilFrame)
+		else
+			widget:VisibleUnitsChanged(WG['unittrackerapi'].visibleUnits, nil)
+		end
 	end
 end
 
@@ -692,10 +771,20 @@ local function UnitDetected(unitID, unitDefID, unitTeam, noUpload)
 end
 
 function widget:VisibleUnitAdded(unitID, unitDefID, unitTeam)
+	local cleanupActive, restoreSerial, restoreFrame, cleanupUntilFrame = replay_checkpoint_range_cleanup_active()
+	if cleanupActive then
+		clear_replay_checkpoint_defense_range_state(restoreSerial, restoreFrame, cleanupUntilFrame)
+		return
+	end
 	UnitDetected(unitID, unitDefID, unitTeam)
 end
 
 function widget:VisibleUnitsChanged(extVisibleUnits, extNumVisibleUnits)
+	local cleanupActive, restoreSerial, restoreFrame, cleanupUntilFrame = replay_checkpoint_range_cleanup_active()
+	if cleanupActive then
+		clear_replay_checkpoint_defense_range_state(restoreSerial, restoreFrame, cleanupUntilFrame)
+		return
+	end
 	-- the set of visible units changed. Now is a good time to reevalueate our life choices
 	-- This happens when we move from team to team, or when we move from spec to other
 	-- my
@@ -746,6 +835,11 @@ local function removeUnit(unitID,defense)
 end
 
 function widget:VisibleUnitRemoved(unitID) -- remove the corresponding ground plate if it exists
+	local cleanupActive, restoreSerial, restoreFrame, cleanupUntilFrame = replay_checkpoint_range_cleanup_active()
+	if cleanupActive then
+		clear_replay_checkpoint_defense_range_state(restoreSerial, restoreFrame, cleanupUntilFrame)
+		return
+	end
 	if defenses[unitID] == nil then return end -- nothing to do
 
 	local defense = defenses[unitID]
@@ -770,6 +864,11 @@ end
 
 
 function widget:FeatureCreated(featureID, allyTeam)
+	local cleanupActive, restoreSerial, restoreFrame, cleanupUntilFrame = replay_checkpoint_range_cleanup_active()
+	if cleanupActive then
+		clear_replay_checkpoint_defense_range_state(restoreSerial, restoreFrame, cleanupUntilFrame)
+		return
+	end
 	-- check if the feature we created could be related to a defense that we currently have active?
 	-- ugh this will require a unitdefid based hash and some other nasty tricks
 	-- check if the feature was created outside of LOS
@@ -789,6 +888,11 @@ function widget:FeatureCreated(featureID, allyTeam)
 end
 
 function widget:PlayerChanged(playerID)
+	local cleanupActive, restoreSerial, restoreFrame, cleanupUntilFrame = replay_checkpoint_range_cleanup_active()
+	if cleanupActive then
+		clear_replay_checkpoint_defense_range_state(restoreSerial, restoreFrame, cleanupUntilFrame)
+		return
+	end
 	--[[
 	spEcho("playerchanged", playerID)
 	local GetLocalPlayerID  = Spring.GetLocalPlayerID( )
@@ -838,10 +942,14 @@ function widget:GameFrame(gf)
 	gameFrame = gf
 end
 
-local buildUnitDefID = nil
-local buildDrawOverride = { ground = false, air = false, nuke = false , cannon = false, lrpc = false}
-
 function widget:Update(dt)
+	local cleanupActive, restoreSerial, restoreFrame, cleanupUntilFrame = replay_checkpoint_range_cleanup_active()
+	if cleanupActive then
+		clear_replay_checkpoint_defense_range_state(restoreSerial, restoreFrame, cleanupUntilFrame)
+		return
+	end
+	rebuild_replay_checkpoint_defense_ranges_after_cleanup()
+
 	--spec, fullview = spGetSpectatingState()
 	--if spec then
 	--	return
@@ -1046,6 +1154,11 @@ local function DRAWRINGS(primitiveType, linethickness, classes, alpha)
 end
 
 function widget:DrawWorld()
+	local cleanupActive, restoreSerial, restoreFrame, cleanupUntilFrame = replay_checkpoint_range_cleanup_active()
+	if cleanupActive then
+		clear_replay_checkpoint_defense_range_state(restoreSerial, restoreFrame, cleanupUntilFrame)
+		return
+	end
 	--if fullview and not enabledAsSpec then
 	--	return
 	--end

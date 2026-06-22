@@ -483,6 +483,8 @@ local spGetUnitWeaponState = Spring.GetUnitWeaponState
 local spGetUnitAllyTeam     = Spring.GetUnitAllyTeam
 local spGetMouseState       = Spring.GetMouseState
 local spTraceScreenRay      = Spring.TraceScreenRay
+local spGetConfigInt        = Spring.GetConfigInt
+local spGetGameFrame        = Spring.GetGameFrame
 local GetModKeyState        = Spring.GetModKeyState
 local GetActiveCommand      = Spring.GetActiveCommand
 local GetSelectedUnits      = Spring.GetSelectedUnits
@@ -550,6 +552,8 @@ local popElementInstance = InstanceVBOTable.popElementInstance
 local pushElementInstance = InstanceVBOTable.pushElementInstance
 
 local attackRangeShader = nil
+local replayCheckpointRangeCleanupSerial = 0
+local replayCheckpointRangeRebuildSerial = 0
 
 local shaderSourceCache = {
 	shaderName = 'Attack Range GL4',
@@ -600,9 +604,83 @@ local unitsOnOff = {} -- unit weapon toggle states, tracked from CommandNotify (
 local unitRangeScale = { selections = {}, mouseovers = {} } -- stores info for units with scaling ranges
 local numScalingUnits = 0
 local myTeam = spGetMyTeamID()
+local timeSinceLastRangeUpdate = 0
+
+local function replay_checkpoint_range_cleanup_active()
+	if spGetConfigInt("ReplayCheckpointVisualCleanup", 1) ~= 1 then
+		return false
+	end
+
+	local restoreSerial = spGetConfigInt("ReplayCheckpointRestoreSerial", 0)
+	if restoreSerial <= 0 then
+		return false
+	end
+
+	local restoreFrame = spGetConfigInt("ReplayCheckpointRestoreFrame", -1)
+	if restoreFrame < 0 then
+		return false
+	end
+
+	local cleanupFrames = spGetConfigInt("ReplayCheckpointRangeCleanupFrames", 300)
+	local cleanupUntilFrame = mathMax(
+		spGetConfigInt("ReplayCheckpointRangeCleanupUntilFrame", restoreFrame + cleanupFrames),
+		spGetConfigInt("ReplayCheckpointVisualCleanupUntilFrame", restoreFrame + 5),
+		restoreFrame + cleanupFrames
+	)
+	local curFrame = spGetGameFrame()
+	if curFrame < restoreFrame or curFrame > cleanupUntilFrame then
+		return false
+	end
+
+	return true, restoreSerial, restoreFrame, cleanupUntilFrame
+end
+
+local function clear_replay_checkpoint_attack_range_state(restoreSerial, restoreFrame, cleanupUntilFrame)
+	selectedUnits = {}
+	selUnits = {}
+	updateSelection = false
+	selections = {}
+	mouseUnit = nil
+	mouseovers = {}
+	unitRangeScale = { selections = {}, mouseovers = {} }
+	numScalingUnits = 0
+	timeSinceLastRangeUpdate = 0
+	isBuilding = false
+
+	for _, instanceTable in pairs(attackRangeVAOs) do
+		InstanceVBOTable.clearInstanceTable(instanceTable)
+		InstanceVBOTable.uploadAllElements(instanceTable)
+	end
+
+	if replayCheckpointRangeCleanupSerial ~= restoreSerial then
+		replayCheckpointRangeCleanupSerial = restoreSerial
+		spEcho(string.format(
+			"[ReplayCheckpoint] Attack Range GL4 cleared range state after restore serial %d at frame %d until frame %d",
+			restoreSerial,
+			restoreFrame,
+			cleanupUntilFrame
+		))
+	end
+end
+
+local function rebuild_replay_checkpoint_attack_ranges_after_cleanup()
+	local restoreSerial = spGetConfigInt("ReplayCheckpointRestoreSerial", 0)
+	if restoreSerial <= 0 or replayCheckpointRangeCleanupSerial ~= restoreSerial or replayCheckpointRangeRebuildSerial == restoreSerial then
+		return
+	end
+
+	replayCheckpointRangeRebuildSerial = restoreSerial
+	updateSelection = true
+	spEcho("[ReplayCheckpoint] Attack Range GL4 queued range rebuild after restore serial " .. restoreSerial)
+end
 
 -- mirrors functionality of UnitDetected
 local function AddSelectedUnit(unitID, mouseover, newRange)
+	local cleanupActive, restoreSerial, restoreFrame, cleanupUntilFrame = replay_checkpoint_range_cleanup_active()
+	if cleanupActive then
+		clear_replay_checkpoint_attack_range_state(restoreSerial, restoreFrame, cleanupUntilFrame)
+		return
+	end
 	--if not show_selected_weapon_ranges then return end
 	local collections = selections
 	if mouseover then
@@ -817,6 +895,11 @@ local function RemoveSelectedUnit(unitID, mouseover)
 end
 
 function widget:SelectionChanged(sel)
+	local cleanupActive, restoreSerial, restoreFrame, cleanupUntilFrame = replay_checkpoint_range_cleanup_active()
+	if cleanupActive then
+		clear_replay_checkpoint_attack_range_state(restoreSerial, restoreFrame, cleanupUntilFrame)
+		return
+	end
 	updateSelection = true
 end
 
@@ -980,6 +1063,11 @@ local function cycleUnitDisplayHandler(_, _, _, data)
 end
 
 function widget:PlayerChanged(playerID)
+	local cleanupActive, restoreSerial, restoreFrame, cleanupUntilFrame = replay_checkpoint_range_cleanup_active()
+	if cleanupActive then
+		clear_replay_checkpoint_attack_range_state(restoreSerial, restoreFrame, cleanupUntilFrame)
+		return
+	end
     myAllyTeamID = Spring.GetLocalAllyTeamID()
     myTeamID = Spring.GetLocalTeamID()
 
@@ -992,6 +1080,11 @@ function widget:Initialize()
 	if initGL4() == false then
 		widgetHandler:RemoveWidget(self)
 		return
+	end
+
+	local cleanupActive, restoreSerial, restoreFrame, cleanupUntilFrame = replay_checkpoint_range_cleanup_active()
+	if cleanupActive then
+		clear_replay_checkpoint_attack_range_state(restoreSerial, restoreFrame, cleanupUntilFrame)
 	end
 
 	unitTogglesChunked = unitTogglesChunked or {}
@@ -1101,8 +1194,14 @@ function widget:KeyRelease(key, mods, isRepeat)
 	end
 end
 
-local timeSinceLastRangeUpdate = 0
 function widget:Update(dt)
+	local cleanupActive, restoreSerial, restoreFrame, cleanupUntilFrame = replay_checkpoint_range_cleanup_active()
+	if cleanupActive then
+		clear_replay_checkpoint_attack_range_state(restoreSerial, restoreFrame, cleanupUntilFrame)
+		return
+	end
+	rebuild_replay_checkpoint_attack_ranges_after_cleanup()
+
 	if updateSelection and gameFrame % 3 == 0 then
 		UpdateSelectedUnits()
 	end
@@ -1227,6 +1326,11 @@ local function DRAWRINGS(primitiveType, linethickness)
 end
 
 function widget:DrawWorld(inMiniMap)
+	local cleanupActive, restoreSerial, restoreFrame, cleanupUntilFrame = replay_checkpoint_range_cleanup_active()
+	if cleanupActive then
+		clear_replay_checkpoint_attack_range_state(restoreSerial, restoreFrame, cleanupUntilFrame)
+		return
+	end
 
 	if autoReload then
 		attackRangeShader = LuaShader.CheckShaderUpdates(shaderSourceCache) or attackRangeShader
@@ -1321,12 +1425,22 @@ function widget:DrawInMiniMap()
 end
 
 function widget:VisibleUnitAdded(unitID, unitDefID, unitTeam)
+	local cleanupActive, restoreSerial, restoreFrame, cleanupUntilFrame = replay_checkpoint_range_cleanup_active()
+	if cleanupActive then
+		clear_replay_checkpoint_attack_range_state(restoreSerial, restoreFrame, cleanupUntilFrame)
+		return
+	end
 	if unitTeam == myTeamID and unitBuilder[unitDefID] then
 		builders[unitID] = true
 	end
 end
 
 function widget:VisibleUnitRemoved(unitID, unitDefID, unitTeam)
+	local cleanupActive, restoreSerial, restoreFrame, cleanupUntilFrame = replay_checkpoint_range_cleanup_active()
+	if cleanupActive then
+		clear_replay_checkpoint_attack_range_state(restoreSerial, restoreFrame, cleanupUntilFrame)
+		return
+	end
 	unitDefID = unitDefID or spGetUnitDefID(unitID)
 	unitTeam = unitTeam or Spring.GetUnitTeam(unitID)
 	RemoveSelectedUnit(unitID, false)

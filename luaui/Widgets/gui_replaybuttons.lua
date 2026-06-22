@@ -17,6 +17,14 @@ end
 
 -- Localized functions for performance
 local mathFloor = math.floor
+local mathMax = math.max
+local mathMin = math.min
+local mathCeil = math.ceil
+local mathSin = math.sin
+local mathCos = math.cos
+local mathPi = math.pi
+local mathAbs = math.abs
+local stringChar = string.char
 
 -- Localized Spring API for performance
 local spGetGameFrame = Spring.GetGameFrame
@@ -25,6 +33,7 @@ local spSetConfigInt = Spring.SetConfigInt
 local spGetMouseState = Spring.GetMouseState
 local spGetReplayLength = Spring.GetReplayLength
 local spGetGameSpeed = Spring.GetGameSpeed
+local spGetGameState = Spring.GetGameState
 local spGetViewGeometry = Spring.GetViewGeometry
 
 local vsx, vsy = spGetViewGeometry()
@@ -40,13 +49,17 @@ local bHeight = buttonHeight * ui_scale
 local buttons = {}
 local speeds = { 0.5, 1, 2, 3, 4, 6, 8, 10, 15, 20 }
 local wPos = { x = 0.00, y = 0.145 }
-local timeline = { x = 0.24, y = 0.022, w = 0.52, h = 0.018 }
+local timeline = { x = 0.24, y = 0.045, w = 0.52, h = 0.030 }
 local isPaused = false
 local isActive = false
 local prevIsActive = false
 local sceduleUpdate = true
 local widgetScale = (0.5 + (vsx * vsy / 5700000))
 local replayLengthFrames = 0
+local replayCheckpointFrames = {}
+local replayCheckpointFramesLoaded = false
+local replayCheckpointFramesLogged = false
+local replayCheckpointFramesLastRefresh = -999999
 local lastSkipFrame = -1
 local lastSkipClock = 0
 local lastRestoreFrame = -1
@@ -56,10 +69,24 @@ local selfTestStartFrame = spGetConfigInt("ReplayTimelineSelfTestStartFrame", 30
 local selfTestTargetFrame = spGetConfigInt("ReplayTimelineSelfTestTargetFrame", 0)
 local selfTestQuit = spGetConfigInt("ReplayTimelineSelfTestQuit", 0) == 1
 local selfTestQuitFrame = spGetConfigInt("ReplayTimelineSelfTestQuitFrame", 0)
-local selfTestTriggered = false
-local selfTestReached = false
-local selfTestComplete = false
-local selfTestDeadlineFrame = 0
+local checkpointTimelineJumps = spGetConfigInt("ReplayTimelineCheckpointJumps", 1) == 1
+local selfTestUseCheckpoint = spGetConfigInt("ReplayTimelineSelfTestUseCheckpoint", spGetConfigInt("ReplayTimelineCheckpointJumps", 1)) == 1
+local selfTestPhase = spGetConfigInt("ReplayTimelineSelfTestPhase", 0)
+local selfTestResolvedTargetFrame = spGetConfigInt("ReplayTimelineSelfTestResolvedTargetFrame", 0)
+local selfTestDeadlineFrame = spGetConfigInt("ReplayTimelineSelfTestDeadlineFrame", 0)
+local selfTestScreenshots = spGetConfigInt("ReplayTimelineSelfTestScreenshots", 0) == 1
+local selfTestPauseBeforeJump = spGetConfigInt("ReplayTimelineSelfTestPauseBeforeJump", 0) == 1
+local selfTestPauseViaButton = spGetConfigInt("ReplayTimelineSelfTestPauseViaButton", 0) == 1
+local selfTestResumeAfterReached = spGetConfigInt("ReplayTimelineSelfTestResumeAfterReached", 0) == 1
+local selfTestResumeAfterReachedDone = spGetConfigInt("ReplayTimelineSelfTestResumeAfterReachedDone", 0) == 1
+local selfTestViaTimelineClick = spGetConfigInt("ReplayTimelineSelfTestViaTimelineClick", 0) == 1
+local selfTestPauseDelaySeconds = spGetConfigInt("ReplayTimelineSelfTestPauseDelayMs", 250) * 0.001
+local selfTestTriggered = selfTestPhase >= 1
+local selfTestReached = selfTestPhase >= 2
+local selfTestComplete = selfTestPhase >= 3
+if selfTestResolvedTargetFrame > 0 then
+	selfTestTargetFrame = selfTestResolvedTargetFrame
+end
 local checkpointSelfTestEnabled = spGetConfigInt("ReplayCheckpointSelfTest", 0) == 1
 local checkpointSelfTestSaveFrame = spGetConfigInt("ReplayCheckpointSelfTestSaveFrame", 30)
 local checkpointSelfTestLoadFrame = spGetConfigInt("ReplayCheckpointSelfTestLoadFrame", 90)
@@ -69,16 +96,53 @@ local checkpointSelfTestSkipSave =
 local checkpointSelfTestResumeFrame = spGetConfigInt("ReplayCheckpointSelfTestResumeFrame", 0)
 local checkpointSelfTestQuit = spGetConfigInt("ReplayCheckpointSelfTestQuit", 0) == 1
 local checkpointSelfTestTimeoutSeconds = spGetConfigInt("ReplayCheckpointSelfTestTimeoutSeconds", 10)
+local checkpointSelfTestPauseBeforeLoad = spGetConfigInt("ReplayCheckpointSelfTestPauseBeforeLoad", 1) == 1
+local checkpointSelfTestPrepareDelaySeconds = 0.25
+local checkpointSelfTestScreenshots = spGetConfigInt("ReplayCheckpointSelfTestScreenshots", 0) == 1
 local checkpointSelfTestPhase = spGetConfigInt("ReplayCheckpointSelfTestPhase", 0)
 local checkpointSelfTestRequestFrame = spGetConfigInt("ReplayCheckpointSelfTestRequestFrame", 0)
 local checkpointSelfTestRequestClock = os.clock()
+local checkpointSelfTestResumeAfterScreenshots = false
+local transitionEnabled = spGetConfigInt("ReplayCheckpointTransition", 1) == 1
+local transitionDurationMs = spGetConfigInt("ReplayCheckpointTransitionDurationMs", 6000)
+local transitionPreloadMs = spGetConfigInt("ReplayCheckpointTransitionPreloadMs", 0)
+local transitionPreloadDraws = spGetConfigInt("ReplayCheckpointTransitionPreloadDraws", 0)
+local transitionStartMs = spGetConfigInt("ReplayCheckpointTransitionStartMs", 0)
+local transitionUntilMs = spGetConfigInt("ReplayCheckpointTransitionUntilMs", 0)
+local transitionStartFrame = spGetConfigInt("ReplayCheckpointTransitionStartFrame", 0)
+local transitionUntilFrame = spGetConfigInt("ReplayCheckpointTransitionUntilFrame", 0)
+local transitionTargetFrame = spGetConfigInt("ReplayCheckpointTransitionTargetFrame", 0)
+local transitionRequestFrame = spGetConfigInt("ReplayCheckpointTransitionRequestFrame", 0)
+local transitionDrawLogged = spGetConfigInt("ReplayCheckpointTransitionDrawLogged", 0) == 1
+local restoreSerialAtWidgetLoad = spGetConfigInt("ReplayCheckpointRestoreSerial", 0)
+local pausedCatchupPhase = spGetConfigInt("ReplayTimelinePausedCatchupPhase", 0)
+local pausedCatchupTargetFrame = spGetConfigInt("ReplayTimelinePausedCatchupTargetFrame", 0)
+local pausedCatchupRequestFrame = spGetConfigInt("ReplayTimelinePausedCatchupRequestFrame", 0)
+local pausedCatchupStartSerial = spGetConfigInt("ReplayTimelinePausedCatchupStartSerial", 0)
+local pausedCatchupRestoreSerial = spGetConfigInt("ReplayTimelinePausedCatchupRestoreSerial", 0)
+local pausedCatchupRestoreSpeedX1000 = spGetConfigInt("ReplayTimelinePausedCatchupRestoreSpeedX1000", 0)
+local pausedCatchupSpeedRestored = spGetConfigInt("ReplayTimelinePausedCatchupSpeedRestored", 0) == 1
+local pausedCatchupSpeedX1000 = spGetConfigInt("ReplayTimelinePausedCatchupSpeedX1000", 500)
+local pausedCatchupPauseFrame = -1
+local pausedCatchupStableDraws = 0
+local pausedCatchupSpeedPrepareChecks = 0
+local pausedCatchupPauseChecks = 0
+local pausedCatchupSpeedSettleChecks = mathMax(1, spGetConfigInt("ReplayTimelinePausedCatchupSpeedSettleChecks", 300))
+local pausedCatchupPauseSettleChecks = mathMax(1, spGetConfigInt("ReplayTimelinePausedCatchupPauseSettleChecks", 90))
+local set_pause_button_state
 
 local glBlending = gl.Blending
 local glColor = gl.Color
 local glRect = gl.Rect
+local glBeginEnd = gl.BeginEnd
+local glVertex = gl.Vertex
+local glLineWidth = gl.LineWidth
+local glText = gl.Text
 local GL_SRC_ALPHA = GL.SRC_ALPHA
 local GL_ONE_MINUS_SRC_ALPHA = GL.ONE_MINUS_SRC_ALPHA
 local GL_ONE = GL.ONE
+local GL_LINE_LOOP = GL.LINE_LOOP
+local GL_LINES = GL.LINES
 
 local RectRound, UiButton, elementCorner
 
@@ -128,11 +192,263 @@ local function setReplaySpeed(speed)
 	Spring.SendCommands("setspeed " .. speed)
 end
 
+local function replay_speed_from_x1000(speedX1000)
+	return mathMax(0.1, speedX1000 * 0.001)
+end
+
+local function get_wanted_replay_speed()
+	local wantedSpeed = spGetGameSpeed()
+	return wantedSpeed or 1
+end
+
+local function now_ms()
+	return mathFloor(os.clock() * 1000)
+end
+
+local function set_config_int(name, value)
+	if spSetConfigInt then
+		spSetConfigInt(name, value, true)
+	end
+end
+
+local function get_replay_paused()
+	if spGetGameState then
+		local _, _, clientPaused = spGetGameState()
+		if clientPaused ~= nil then
+			return clientPaused
+		end
+	end
+
+	local _, _, paused = spGetGameSpeed()
+	return paused
+end
+
+local function start_restore_transition(targetFrame, requestFrame)
+	if not transitionEnabled then
+		return
+	end
+
+	local now = now_ms()
+	local durationFrames = mathMax(30, mathCeil((transitionDurationMs / 1000) * 30))
+	transitionStartMs = now
+	transitionUntilMs = now + mathMax(1000, transitionDurationMs)
+	transitionStartFrame = targetFrame
+	transitionUntilFrame = targetFrame + durationFrames
+	transitionTargetFrame = targetFrame
+	transitionRequestFrame = requestFrame or spGetGameFrame()
+
+	set_config_int("ReplayCheckpointTransitionStartMs", transitionStartMs)
+	set_config_int("ReplayCheckpointTransitionUntilMs", transitionUntilMs)
+	set_config_int("ReplayCheckpointTransitionStartFrame", transitionStartFrame)
+	set_config_int("ReplayCheckpointTransitionUntilFrame", transitionUntilFrame)
+	set_config_int("ReplayCheckpointTransitionTargetFrame", transitionTargetFrame)
+	set_config_int("ReplayCheckpointTransitionRequestFrame", transitionRequestFrame)
+	transitionDrawLogged = false
+	set_config_int("ReplayCheckpointTransitionDrawLogged", 0)
+
+	Spring.Echo(
+		"[ReplayCheckpointTransition] start target=" .. transitionTargetFrame ..
+		" request=" .. transitionRequestFrame ..
+		" duration_ms=" .. transitionDurationMs ..
+		" until_frame=" .. transitionUntilFrame
+	)
+end
+
+local function clear_restore_transition()
+	transitionStartMs = 0
+	transitionUntilMs = 0
+	transitionStartFrame = 0
+	transitionUntilFrame = 0
+	transitionTargetFrame = 0
+	transitionRequestFrame = 0
+
+	set_config_int("ReplayCheckpointTransitionStartMs", 0)
+	set_config_int("ReplayCheckpointTransitionUntilMs", 0)
+	set_config_int("ReplayCheckpointTransitionStartFrame", 0)
+	set_config_int("ReplayCheckpointTransitionUntilFrame", 0)
+	set_config_int("ReplayCheckpointTransitionTargetFrame", 0)
+	set_config_int("ReplayCheckpointTransitionRequestFrame", 0)
+	transitionDrawLogged = false
+	set_config_int("ReplayCheckpointTransitionDrawLogged", 0)
+end
+
+local function clear_paused_timeline_catchup()
+	pausedCatchupPhase = 0
+	pausedCatchupTargetFrame = 0
+	pausedCatchupRequestFrame = 0
+	pausedCatchupStartSerial = 0
+	pausedCatchupRestoreSerial = 0
+	pausedCatchupRestoreSpeedX1000 = 0
+	pausedCatchupSpeedRestored = false
+	pausedCatchupSpeedPrepareChecks = 0
+	pausedCatchupPauseChecks = 0
+
+	set_config_int("ReplayTimelinePausedCatchupPhase", 0)
+	set_config_int("ReplayTimelinePausedCatchupTargetFrame", 0)
+	set_config_int("ReplayTimelinePausedCatchupRequestFrame", 0)
+	set_config_int("ReplayTimelinePausedCatchupStartSerial", 0)
+	set_config_int("ReplayTimelinePausedCatchupRestoreSerial", 0)
+	set_config_int("ReplayTimelinePausedCatchupRestoreSpeedX1000", 0)
+	set_config_int("ReplayTimelinePausedCatchupSpeedRestored", 0)
+end
+
+local function set_replay_paused(paused, source)
+	if Spring.SetReplayPaused then
+		local accepted = Spring.SetReplayPaused(paused)
+		Spring.Echo(
+			"[ReplayTimelinePausedCatchup] pause-api source=" .. source ..
+			" paused=" .. (paused and "1" or "0") ..
+			" accepted=" .. (accepted and "1" or "0")
+		)
+		if accepted then
+			return true
+		end
+	end
+
+	Spring.Echo(
+		"[ReplayTimelinePausedCatchup] pause-command source=" .. source ..
+		" paused=" .. (paused and "1" or "0")
+	)
+	Spring.SendCommands(paused and "pause 1" or "pause 0")
+	return false
+end
+
+local function restore_paused_timeline_catchup_speed(source)
+	if pausedCatchupSpeedRestored or pausedCatchupRestoreSpeedX1000 <= 0 then
+		return
+	end
+
+	local restoreSpeed = replay_speed_from_x1000(pausedCatchupRestoreSpeedX1000)
+	setReplaySpeed(restoreSpeed)
+	pausedCatchupSpeedRestored = true
+	set_config_int("ReplayTimelinePausedCatchupSpeedRestored", 1)
+	Spring.Echo(
+		"[ReplayTimelinePausedCatchup] speed-restore source=" .. source ..
+		" speed=" .. restoreSpeed
+	)
+end
+
+local function set_paused_timeline_catchup_phase(phase)
+	pausedCatchupPhase = phase
+	set_config_int("ReplayTimelinePausedCatchupPhase", phase)
+end
+
+local function prepare_paused_timeline_catchup(targetFrame, requestFrame, source)
+	if source ~= "manual" and source ~= "self-test" then
+		return
+	end
+
+	local paused = get_replay_paused()
+	local wantsPausedAfterJump = paused or isPaused or (source == "self-test" and selfTestPauseBeforeJump)
+	if not wantsPausedAfterJump then
+		clear_paused_timeline_catchup()
+		return
+	end
+
+	pausedCatchupTargetFrame = targetFrame
+	pausedCatchupRequestFrame = requestFrame
+	pausedCatchupStartSerial = spGetConfigInt("ReplayCheckpointRestoreSerial", 0)
+	pausedCatchupRestoreSerial = 0
+	pausedCatchupRestoreSpeedX1000 = mathMax(1, mathFloor((get_wanted_replay_speed() * 1000) + 0.5))
+	pausedCatchupSpeedRestored = false
+	set_paused_timeline_catchup_phase(1)
+
+	set_config_int("ReplayTimelinePausedCatchupTargetFrame", pausedCatchupTargetFrame)
+	set_config_int("ReplayTimelinePausedCatchupRequestFrame", pausedCatchupRequestFrame)
+	set_config_int("ReplayTimelinePausedCatchupStartSerial", pausedCatchupStartSerial)
+	set_config_int("ReplayTimelinePausedCatchupRestoreSerial", 0)
+	set_config_int("ReplayTimelinePausedCatchupRestoreSpeedX1000", pausedCatchupRestoreSpeedX1000)
+	set_config_int("ReplayTimelinePausedCatchupSpeedRestored", 0)
+
+	Spring.Echo(
+		"[ReplayTimelinePausedCatchup] pending target=" .. pausedCatchupTargetFrame ..
+		" request=" .. pausedCatchupRequestFrame ..
+		" serial=" .. pausedCatchupStartSerial ..
+		" source=" .. source ..
+		" speed_paused=" .. (paused and "1" or "0") ..
+		" restore_speed_x1000=" .. pausedCatchupRestoreSpeedX1000
+	)
+end
+
 local function update_replay_length()
 	local seconds = spGetReplayLength and spGetReplayLength()
 	if seconds and seconds > 0 then
 		replayLengthFrames = math.max(replayLengthFrames, mathFloor(seconds * 30))
 	end
+end
+
+local pendingCheckpointLoad
+
+local function should_defer_checkpoint_load()
+	return transitionEnabled and (transitionPreloadMs > 0 or transitionPreloadDraws > 0)
+end
+
+local function send_checkpoint_load(targetFrame)
+	if Spring.LoadReplayCheckpoint then
+		local accepted = Spring.LoadReplayCheckpoint(targetFrame)
+		Spring.Echo("[ReplayCheckpointTransition] api-load target=" .. targetFrame .. " accepted=" .. (accepted and "1" or "0"))
+		if accepted then
+			return
+		end
+	end
+	Spring.Echo("[ReplayCheckpointTransition] command-load target=" .. targetFrame)
+	Spring.SendCommands("replaycheckpoint load " .. targetFrame)
+end
+
+local function request_checkpoint_load(targetFrame, requestFrame, source)
+	source = source or "manual"
+	prepare_paused_timeline_catchup(targetFrame, requestFrame, source)
+	start_restore_transition(targetFrame, requestFrame)
+	if not should_defer_checkpoint_load() then
+		send_checkpoint_load(targetFrame)
+		return false
+	end
+
+	pendingCheckpointLoad = {
+		targetFrame = targetFrame,
+		requestFrame = requestFrame,
+		source = source,
+		startClock = os.clock(),
+		drawBudget = mathMax(0, transitionPreloadDraws),
+		remainingDraws = mathMax(0, transitionPreloadDraws),
+	}
+	Spring.Echo(
+		"[ReplayCheckpointTransition] preload target=" .. targetFrame ..
+		" request=" .. requestFrame ..
+		" source=" .. pendingCheckpointLoad.source ..
+		" min_ms=" .. transitionPreloadMs ..
+		" min_draws=" .. pendingCheckpointLoad.drawBudget
+	)
+	return true
+end
+
+local function note_checkpoint_load_draw()
+	if pendingCheckpointLoad and pendingCheckpointLoad.remainingDraws > 0 then
+		pendingCheckpointLoad.remainingDraws = pendingCheckpointLoad.remainingDraws - 1
+	end
+end
+
+local function update_pending_checkpoint_load()
+	if not pendingCheckpointLoad then
+		return false
+	end
+
+	local elapsedMs = mathFloor((os.clock() - pendingCheckpointLoad.startClock) * 1000)
+	if elapsedMs < transitionPreloadMs or pendingCheckpointLoad.remainingDraws > 0 then
+		return true
+	end
+
+	local load = pendingCheckpointLoad
+	pendingCheckpointLoad = nil
+	Spring.Echo(
+		"[ReplayCheckpointTransition] load-dispatch target=" .. load.targetFrame ..
+		" request=" .. load.requestFrame ..
+		" source=" .. load.source ..
+		" elapsed_ms=" .. elapsedMs ..
+		" draws_seen=" .. (load.drawBudget - load.remainingDraws)
+	)
+	send_checkpoint_load(load.targetFrame)
+	return true
 end
 
 local function timeline_rect_pixels()
@@ -150,6 +466,43 @@ local function frame_from_timeline_x(x)
 	return mathFloor(t * replayLengthFrames + 0.5)
 end
 
+local function timeline_click_point_for_frame(targetFrame)
+	update_replay_length()
+	local x1, y1, x2, y2 = timeline_rect_pixels()
+	local progress = targetFrame / mathMax(1, replayLengthFrames)
+	local clickX = mathFloor(x1 + ((x2 - x1) * mathMax(0, mathMin(1, progress))) + 0.5)
+	local clickY = mathFloor(((y1 + y2) * 0.5) + 0.5)
+	return clickX, clickY, frame_from_timeline_x(clickX)
+end
+
+local function refresh_replay_checkpoint_frames(currentFrame)
+	if replayCheckpointFramesLoaded or not Spring.GetReplayCheckpoints then
+		return
+	end
+
+	if currentFrame - replayCheckpointFramesLastRefresh < 30 then
+		return
+	end
+
+	replayCheckpointFramesLastRefresh = currentFrame
+	local frames = Spring.GetReplayCheckpoints()
+	if type(frames) ~= "table" or #frames <= 0 then
+		return
+	end
+
+	replayCheckpointFrames = frames
+	replayCheckpointFramesLoaded = true
+
+	if not replayCheckpointFramesLogged then
+		replayCheckpointFramesLogged = true
+		Spring.Echo(
+			"[ReplayTimelineCheckpoints] loaded count=" .. #replayCheckpointFrames ..
+			" first=" .. replayCheckpointFrames[1] ..
+			" last=" .. replayCheckpointFrames[#replayCheckpointFrames]
+		)
+	end
+end
+
 local function jump_to_frame(targetFrame, source)
 	update_replay_length()
 	local currentFrame = spGetGameFrame()
@@ -157,17 +510,21 @@ local function jump_to_frame(targetFrame, source)
 		return
 	end
 	targetFrame = math.max(1, math.min(replayLengthFrames, targetFrame))
-	if targetFrame <= currentFrame + 1 then
+	local useCheckpoint = targetFrame <= currentFrame + 1 or
+		(checkpointTimelineJumps and (source ~= "self-test" or selfTestUseCheckpoint))
+	if useCheckpoint then
 		local now = os.clock()
 		if targetFrame == lastRestoreFrame and now - lastRestoreClock < 0.5 then
 			return
 		end
 		lastRestoreFrame = targetFrame
 		lastRestoreClock = now
-		if source ~= "self-test" then
-			Spring.Echo("[Replay] Requesting checkpoint restore to frame " .. targetFrame)
+		if source == "self-test" then
+			Spring.Echo("[ReplayTimelineTest] checkpoint-request current=" .. currentFrame .. " target=" .. targetFrame)
+		else
+			Spring.Echo("[Replay] Requesting checkpoint restore to frame " .. targetFrame .. " from frame " .. currentFrame)
 		end
-		Spring.SendCommands("replaycheckpoint load " .. targetFrame)
+		request_checkpoint_load(targetFrame, currentFrame, source or "manual")
 		return
 	end
 	local now = os.clock()
@@ -176,6 +533,9 @@ local function jump_to_frame(targetFrame, source)
 	end
 	lastSkipFrame = targetFrame
 	lastSkipClock = now
+	if source == "self-test" then
+		Spring.Echo("[ReplayTimelineTest] skip-request current=" .. currentFrame .. " target=" .. targetFrame)
+	end
 	Spring.SendCommands("skip f" .. targetFrame)
 end
 
@@ -211,6 +571,453 @@ local function checkpoint_self_test_mark_complete()
 	end
 end
 
+local function timeline_self_test_set_phase(phase)
+	selfTestPhase = phase
+	selfTestTriggered = phase >= 1
+	selfTestReached = phase >= 2
+	selfTestComplete = phase >= 3
+	if spSetConfigInt then
+		spSetConfigInt("ReplayTimelineSelfTestPhase", phase)
+	end
+end
+
+local function timeline_self_test_set_target(targetFrame, deadlineFrame)
+	selfTestTargetFrame = targetFrame
+	selfTestDeadlineFrame = deadlineFrame
+	if spSetConfigInt then
+		spSetConfigInt("ReplayTimelineSelfTestResolvedTargetFrame", targetFrame)
+		spSetConfigInt("ReplayTimelineSelfTestDeadlineFrame", deadlineFrame)
+	end
+end
+
+local function timeline_self_test_fail(currentFrame, targetFrame, reason)
+	timeline_self_test_set_phase(3)
+	Spring.Echo("[ReplayTimelineTest] failed current=" .. currentFrame .. " target=" .. targetFrame .. " reason=" .. reason)
+	if selfTestQuit then
+		Spring.SendCommands("quitforce")
+	end
+end
+
+local timelineSelfTestPendingScreenshots = {}
+local timelineSelfTestScreenshotLabels = {}
+local timelineSelfTestQuitAfterScreenshots = false
+local timelineSelfTestPendingJump = false
+local timelineSelfTestRequestClock = os.clock()
+
+set_pause_button_state = function(paused)
+	isPaused = paused
+	if buttons[#buttons] then
+		buttons[#buttons].text = paused and "  >>" or "  ||"
+		sceduleUpdate = true
+	end
+end
+
+local function set_replay_pause_from_button(paused)
+	set_pause_button_state(paused)
+	set_replay_paused(paused, "manual-button")
+end
+
+local function replay_checkpoint_guishader_debug_dump(label)
+	if WG and WG['guishader'] and WG['guishader'].ReplayCheckpointDebugDump then
+		WG['guishader'].ReplayCheckpointDebugDump(label)
+	end
+end
+
+local function timeline_self_test_screenshot(label, frame, defer)
+	if not selfTestScreenshots or timelineSelfTestScreenshotLabels[label] then
+		return
+	end
+	timelineSelfTestScreenshotLabels[label] = true
+	Spring.Echo("[ReplayTimelineTest] screenshot label=" .. label .. " frame=" .. frame)
+	if not defer then
+		replay_checkpoint_guishader_debug_dump("timeline-" .. label)
+		Spring.SendCommands("screenshot")
+		return
+	end
+	timelineSelfTestPendingScreenshots[#timelineSelfTestPendingScreenshots + 1] = {
+		label = label,
+		draws = 2,
+	}
+end
+
+local function timeline_self_test_capture_pending_screenshots()
+	for i = #timelineSelfTestPendingScreenshots, 1, -1 do
+		local pending = timelineSelfTestPendingScreenshots[i]
+		pending.draws = pending.draws - 1
+		if pending.draws <= 0 then
+			Spring.Echo("[ReplayTimelineTest] screenshot-capture label=" .. pending.label)
+			replay_checkpoint_guishader_debug_dump("timeline-" .. pending.label)
+			Spring.SendCommands("screenshot")
+			table.remove(timelineSelfTestPendingScreenshots, i)
+		end
+	end
+end
+
+local function timeline_self_test_has_pending_screenshots()
+	return #timelineSelfTestPendingScreenshots > 0
+end
+
+local function timeline_self_test_dispatch_jump(currentFrame, targetFrame)
+	timeline_self_test_screenshot("before-jump", currentFrame, false)
+	if not selfTestViaTimelineClick then
+		jump_to_frame(targetFrame, "self-test")
+		return
+	end
+
+	local clickX, clickY, clickFrame = timeline_click_point_for_frame(targetFrame)
+	Spring.Echo(
+		"[ReplayTimelineTest] timeline-click current=" .. currentFrame ..
+		" target=" .. targetFrame ..
+		" click_frame=" .. clickFrame ..
+		" x=" .. clickX ..
+		" y=" .. clickY ..
+		" active=" .. (isActive and "1" or "0")
+	)
+	if clickFrame ~= targetFrame then
+		timeline_self_test_fail(currentFrame, targetFrame, "timeline-click-frame-quantization")
+		return
+	end
+	if not widget:MousePress(clickX, clickY, 1, "self-test") then
+		timeline_self_test_fail(currentFrame, targetFrame, "timeline-click-not-handled")
+	end
+end
+
+local function timeline_self_test_quit_or_defer()
+	if selfTestScreenshots and timeline_self_test_has_pending_screenshots() then
+		timelineSelfTestQuitAfterScreenshots = true
+		Spring.Echo("[ReplayTimelineTest] quit-deferred pending_screenshots=" .. #timelineSelfTestPendingScreenshots)
+		return
+	end
+	timeline_self_test_set_phase(3)
+	Spring.SendCommands("quitforce")
+end
+
+local function timeline_self_test_finish_deferred_quit()
+	if timelineSelfTestQuitAfterScreenshots and not timeline_self_test_has_pending_screenshots() then
+		timelineSelfTestQuitAfterScreenshots = false
+		timeline_self_test_set_phase(3)
+		Spring.SendCommands("quitforce")
+	end
+end
+
+local function timeline_self_test_resume_after_reached()
+	if not selfTestResumeAfterReached or selfTestResumeAfterReachedDone or not selfTestReached or selfTestComplete then
+		return
+	end
+	if timeline_self_test_has_pending_screenshots() then
+		return
+	end
+
+	local currentFrame = spGetGameFrame()
+	local paused = get_replay_paused()
+	selfTestResumeAfterReachedDone = true
+	set_config_int("ReplayTimelineSelfTestResumeAfterReachedDone", 1)
+
+	if not paused then
+		Spring.Echo(
+			"[ReplayTimelineTest] resume-after-reached current=" .. currentFrame ..
+			" target=" .. selfTestTargetFrame ..
+			" paused=0 already=1"
+		)
+		return
+	end
+
+	set_pause_button_state(false)
+	set_replay_paused(false, "self-test-after-reached")
+	Spring.Echo(
+		"[ReplayTimelineTest] resume-after-reached current=" .. currentFrame ..
+		" target=" .. selfTestTargetFrame ..
+		" paused=1"
+	)
+end
+
+local function timeline_self_test_mark_reached(frame, paused)
+	timeline_self_test_set_phase(2)
+	Spring.Echo(
+		"[ReplayTimelineTest] reached current=" .. frame ..
+		" target=" .. selfTestTargetFrame ..
+		" paused=" .. (paused and "1" or "0")
+	)
+	timeline_self_test_screenshot("reached", frame, true)
+	if selfTestQuit and (selfTestQuitFrame <= frame or selfTestQuitFrame <= 0) then
+		timeline_self_test_quit_or_defer()
+	elseif selfTestQuit then
+		Spring.Echo("[ReplayTimelineTest] continue current=" .. frame .. " target=" .. selfTestTargetFrame .. " quit_frame=" .. selfTestQuitFrame)
+	else
+		timeline_self_test_set_phase(3)
+	end
+end
+
+local function timeline_paused_catchup_blocks_reached()
+	return pausedCatchupPhase > 0 and pausedCatchupTargetFrame == selfTestTargetFrame
+end
+
+local function complete_paused_timeline_catchup(currentFrame, paused)
+	local targetFrame = pausedCatchupTargetFrame
+	local restoreFrame = spGetConfigInt("ReplayCheckpointRestoreFrame", -1)
+	Spring.Echo(
+		"[ReplayTimelinePausedCatchup] complete current=" .. currentFrame ..
+		" target=" .. targetFrame ..
+		" restore=" .. restoreFrame ..
+		" paused=" .. (paused and "1" or "0")
+	)
+	clear_paused_timeline_catchup()
+
+	if selfTestPauseBeforeJump and selfTestTriggered and not selfTestReached and selfTestTargetFrame == targetFrame then
+		timeline_self_test_mark_reached(currentFrame, paused)
+	end
+end
+
+local function fail_paused_timeline_catchup(reason, currentFrame, paused, detail)
+	local targetFrame = pausedCatchupTargetFrame
+	local restoreFrame = spGetConfigInt("ReplayCheckpointRestoreFrame", -1)
+	Spring.Echo(
+		"[ReplayTimelinePausedCatchup] failed current=" .. currentFrame ..
+		" target=" .. targetFrame ..
+		" restore=" .. restoreFrame ..
+		" paused=" .. (paused and "1" or "0") ..
+		" reason=" .. reason ..
+		(detail or "")
+	)
+	clear_paused_timeline_catchup()
+
+	if selfTestTriggered and not selfTestComplete and selfTestTargetFrame == targetFrame then
+		timeline_self_test_set_phase(3)
+		Spring.Echo(
+			"[ReplayTimelineTest] failed current=" .. currentFrame ..
+			" target=" .. targetFrame ..
+			" reason=paused-catchup-" .. reason
+		)
+		if selfTestQuit then
+			Spring.SendCommands("quitforce")
+		end
+	end
+end
+
+local function update_paused_timeline_catchup()
+	if pausedCatchupPhase <= 0 or pausedCatchupTargetFrame <= 0 then
+		return false
+	end
+
+	local currentFrame = spGetGameFrame()
+	local restoreSerial = spGetConfigInt("ReplayCheckpointRestoreSerial", 0)
+	local restoreFrame = spGetConfigInt("ReplayCheckpointRestoreFrame", -1)
+	local restoreTargetFrame = spGetConfigInt("ReplayCheckpointRestoreTargetFrame", -1)
+	local speedPaused = get_replay_paused()
+
+	if pausedCatchupPhase == 1 then
+		if restoreSerial <= pausedCatchupStartSerial or restoreTargetFrame ~= pausedCatchupTargetFrame then
+			return true
+		end
+
+		pausedCatchupRestoreSerial = restoreSerial
+		set_config_int("ReplayTimelinePausedCatchupRestoreSerial", pausedCatchupRestoreSerial)
+
+		if currentFrame >= pausedCatchupTargetFrame then
+			Spring.Echo(
+				"[ReplayTimelinePausedCatchup] skipped current=" .. currentFrame ..
+				" target=" .. pausedCatchupTargetFrame ..
+				" restore=" .. restoreFrame ..
+				" paused=" .. (speedPaused and "1" or "0")
+			)
+			clear_paused_timeline_catchup()
+			return false
+		end
+
+		set_paused_timeline_catchup_phase(2)
+		pausedCatchupSpeedPrepareChecks = 0
+		Spring.Echo(
+			"[ReplayTimelinePausedCatchup] speed-prepare current=" .. currentFrame ..
+			" target=" .. pausedCatchupTargetFrame ..
+			" restore=" .. restoreFrame ..
+			" span=" .. (pausedCatchupTargetFrame - currentFrame) ..
+			" paused=1" ..
+			" speed_paused=" .. (speedPaused and "1" or "0") ..
+			" catchup_speed=" .. replay_speed_from_x1000(pausedCatchupSpeedX1000)
+		)
+		setReplaySpeed(replay_speed_from_x1000(pausedCatchupSpeedX1000))
+		return true
+	end
+
+	if pausedCatchupPhase == 2 then
+		local catchupSpeed = replay_speed_from_x1000(pausedCatchupSpeedX1000)
+		local wantedSpeed = get_wanted_replay_speed()
+		pausedCatchupSpeedPrepareChecks = pausedCatchupSpeedPrepareChecks + 1
+		if wantedSpeed > catchupSpeed + 0.01 and pausedCatchupSpeedPrepareChecks < pausedCatchupSpeedSettleChecks then
+			return true
+		end
+		if wantedSpeed > catchupSpeed + 0.01 then
+			fail_paused_timeline_catchup(
+				"speed-settle-timeout",
+				currentFrame,
+				speedPaused,
+				" wanted_speed=" .. wantedSpeed ..
+				" catchup_speed=" .. catchupSpeed ..
+				" checks=" .. pausedCatchupSpeedPrepareChecks
+			)
+			return true
+		end
+
+		set_paused_timeline_catchup_phase(3)
+		Spring.Echo(
+			"[ReplayTimelinePausedCatchup] start current=" .. currentFrame ..
+			" target=" .. pausedCatchupTargetFrame ..
+			" restore=" .. restoreFrame ..
+			" span=" .. (pausedCatchupTargetFrame - currentFrame) ..
+			" paused=1" ..
+			" speed_paused=" .. (speedPaused and "1" or "0") ..
+			" catchup_speed=" .. catchupSpeed ..
+			" wanted_speed=" .. wantedSpeed
+		)
+		set_pause_button_state(false)
+		set_replay_paused(false, "catchup-start")
+		return true
+	end
+
+	if pausedCatchupPhase == 3 then
+		if currentFrame < pausedCatchupTargetFrame then
+			return true
+		end
+
+		set_paused_timeline_catchup_phase(4)
+		pausedCatchupPauseFrame = currentFrame
+		pausedCatchupStableDraws = 0
+		pausedCatchupPauseChecks = 0
+		set_pause_button_state(true)
+		local accepted = set_replay_paused(true, "catchup-target")
+		if accepted then
+			restore_paused_timeline_catchup_speed("catchup-target")
+		end
+		Spring.Echo(
+			"[ReplayTimelinePausedCatchup] pause-request current=" .. currentFrame ..
+			" target=" .. pausedCatchupTargetFrame ..
+			" speed_paused=" .. (speedPaused and "1" or "0")
+		)
+		return true
+	end
+
+	if pausedCatchupPhase == 4 then
+		pausedCatchupPauseChecks = pausedCatchupPauseChecks + 1
+		if currentFrame == pausedCatchupPauseFrame then
+			pausedCatchupStableDraws = pausedCatchupStableDraws + 1
+		else
+			pausedCatchupPauseFrame = currentFrame
+			pausedCatchupStableDraws = 0
+		end
+
+		if speedPaused then
+			restore_paused_timeline_catchup_speed("catchup-stable")
+		end
+
+		if not speedPaused and pausedCatchupPauseChecks < pausedCatchupPauseSettleChecks then
+			return true
+		end
+		if not speedPaused then
+			fail_paused_timeline_catchup(
+				"pause-settle-timeout",
+				currentFrame,
+				false,
+				" checks=" .. pausedCatchupPauseChecks ..
+				" stable_draws=" .. pausedCatchupStableDraws
+			)
+			return true
+		end
+
+		complete_paused_timeline_catchup(currentFrame, true)
+		return true
+	end
+
+	clear_paused_timeline_catchup()
+	return false
+end
+
+local function timeline_self_test_update_paused_jump()
+	if not selfTestEnabled or selfTestComplete then
+		return
+	end
+	if timelineSelfTestPendingJump then
+		local currentFrame = spGetGameFrame()
+		local paused = get_replay_paused()
+		if os.clock() - timelineSelfTestRequestClock >= selfTestPauseDelaySeconds then
+			timelineSelfTestPendingJump = false
+			Spring.Echo(
+				"[ReplayTimelineTest] jump-dispatch current=" .. currentFrame ..
+				" target=" .. selfTestTargetFrame ..
+				" paused=" .. (paused and "1" or "0")
+			)
+			timeline_self_test_dispatch_jump(currentFrame, selfTestTargetFrame)
+		end
+	elseif selfTestPauseBeforeJump and selfTestTriggered and not selfTestReached and selfTestTargetFrame > 0 then
+		if timeline_paused_catchup_blocks_reached() then
+			return
+		end
+		local currentFrame = spGetGameFrame()
+		if currentFrame >= selfTestTargetFrame then
+			local restoreSerial = spGetConfigInt("ReplayCheckpointRestoreSerial", 0)
+			if restoreSerial > 0 and restoreSerialAtWidgetLoad <= 0 then
+				return
+			end
+			local paused = get_replay_paused()
+			timeline_self_test_mark_reached(currentFrame, paused)
+		end
+	end
+end
+
+local checkpointSelfTestPendingScreenshots = {}
+local checkpointSelfTestScreenshotLabels = {}
+local function checkpoint_self_test_screenshot(label, frame)
+	if not checkpointSelfTestScreenshots or checkpointSelfTestScreenshotLabels[label] then
+		return
+	end
+	checkpointSelfTestScreenshotLabels[label] = true
+	Spring.Echo("[ReplayCheckpointTest] screenshot label=" .. label .. " frame=" .. frame)
+	if label == "before-load" or label == "resumed" then
+		replay_checkpoint_guishader_debug_dump("checkpoint-" .. label)
+		Spring.SendCommands("screenshot")
+		return
+	end
+	checkpointSelfTestPendingScreenshots[#checkpointSelfTestPendingScreenshots + 1] = {
+		label = label,
+		draws = 2,
+	}
+end
+
+local function checkpoint_self_test_capture_pending_screenshots()
+	for i = #checkpointSelfTestPendingScreenshots, 1, -1 do
+		local pending = checkpointSelfTestPendingScreenshots[i]
+		pending.draws = pending.draws - 1
+		if pending.draws <= 0 then
+			Spring.Echo("[ReplayCheckpointTest] screenshot-capture label=" .. pending.label)
+			replay_checkpoint_guishader_debug_dump("checkpoint-" .. pending.label)
+			Spring.SendCommands("screenshot")
+			table.remove(checkpointSelfTestPendingScreenshots, i)
+		end
+	end
+end
+
+local function checkpoint_self_test_has_pending_screenshots()
+	return #checkpointSelfTestPendingScreenshots > 0
+end
+
+local function checkpoint_self_test_prepare_load(frame, targetFrame)
+	checkpointSelfTestRequestClock = os.clock()
+	checkpoint_self_test_set_phase(3)
+	isPaused = checkpointSelfTestPauseBeforeLoad
+	if buttons[#buttons] then
+		buttons[#buttons].text = checkpointSelfTestPauseBeforeLoad and "  >>" or "  ||"
+		sceduleUpdate = true
+	end
+	Spring.Echo(
+		"[ReplayCheckpointTest] prepare-load current=" .. frame ..
+		" target=" .. targetFrame ..
+		" paused=" .. (checkpointSelfTestPauseBeforeLoad and "1" or "0")
+	)
+	checkpoint_self_test_screenshot("before-load", frame)
+	if checkpointSelfTestPauseBeforeLoad then
+		Spring.SendCommands("pause 1")
+	end
+end
+
 local function checkpoint_self_test_game_frame(frame)
 	if not checkpointSelfTestEnabled or checkpointSelfTestPhase >= 5 then
 		return false
@@ -219,27 +1026,8 @@ local function checkpoint_self_test_game_frame(frame)
 	local targetFrame = checkpoint_self_test_target_frame()
 
 	if checkpointSelfTestPhase <= 0 and checkpointSelfTestSkipSave and frame >= checkpointSelfTestLoadFrame then
-		if targetFrame >= frame then
-			Spring.Echo("[ReplayCheckpointTest] failed current=" .. frame .. " target=" .. targetFrame .. " reason=no-backward-target")
-			checkpoint_self_test_mark_complete()
-			return true
-		end
-
-		checkpointSelfTestRequestFrame = frame
-		checkpointSelfTestRequestClock = os.clock()
-		if spSetConfigInt then
-			spSetConfigInt("ReplayCheckpointSelfTestRequestFrame", checkpointSelfTestRequestFrame)
-		end
-		checkpoint_self_test_set_phase(2)
-		isPaused = true
-		if buttons[#buttons] then
-			buttons[#buttons].text = "  >>"
-			sceduleUpdate = true
-		end
 		Spring.Echo("[ReplayCheckpointTest] prerecorded current=" .. frame .. " target=" .. targetFrame)
-		Spring.Echo("[ReplayCheckpointTest] load current=" .. frame .. " target=" .. targetFrame)
-		Spring.SendCommands("pause 1")
-		Spring.SendCommands("replaycheckpoint load " .. targetFrame)
+		checkpoint_self_test_prepare_load(frame, targetFrame)
 		return true
 	end
 
@@ -251,31 +1039,12 @@ local function checkpoint_self_test_game_frame(frame)
 	end
 
 	if checkpointSelfTestPhase == 1 and frame >= checkpointSelfTestLoadFrame then
-		if targetFrame >= frame then
-			Spring.Echo("[ReplayCheckpointTest] failed current=" .. frame .. " target=" .. targetFrame .. " reason=no-backward-target")
-			checkpoint_self_test_mark_complete()
-			return true
-		end
-
-		checkpointSelfTestRequestFrame = frame
-		checkpointSelfTestRequestClock = os.clock()
-		if spSetConfigInt then
-			spSetConfigInt("ReplayCheckpointSelfTestRequestFrame", checkpointSelfTestRequestFrame)
-		end
-		checkpoint_self_test_set_phase(2)
-		isPaused = true
-		if buttons[#buttons] then
-			buttons[#buttons].text = "  >>"
-			sceduleUpdate = true
-		end
-		Spring.Echo("[ReplayCheckpointTest] load current=" .. frame .. " target=" .. targetFrame)
-		Spring.SendCommands("pause 1")
-		Spring.SendCommands("replaycheckpoint load " .. targetFrame)
+		checkpoint_self_test_prepare_load(frame, targetFrame)
 		return true
 	end
 
 	if checkpointSelfTestPhase == 4 and checkpointSelfTestResumeFrame > 0 and frame >= checkpointSelfTestResumeFrame then
-		local _, _, paused = spGetGameSpeed()
+		local paused = get_replay_paused()
 		Spring.Echo(
 			"[ReplayCheckpointTest] resumed current=" .. frame ..
 			" target=" .. targetFrame ..
@@ -283,30 +1052,75 @@ local function checkpoint_self_test_game_frame(frame)
 			" resume=" .. checkpointSelfTestResumeFrame ..
 			" paused=" .. (paused and "1" or "0")
 		)
+		checkpoint_self_test_screenshot("resumed", frame)
 		checkpoint_self_test_mark_complete()
 		return true
 	end
 
-	return checkpointSelfTestPhase == 2 or checkpointSelfTestPhase == 4
+	return checkpointSelfTestPhase == 2 or checkpointSelfTestPhase == 3 or checkpointSelfTestPhase == 4
 end
 
 local function checkpoint_self_test_update()
-	if not checkpointSelfTestEnabled or (checkpointSelfTestPhase ~= 2 and checkpointSelfTestPhase ~= 4) then
+	if not checkpointSelfTestEnabled or (checkpointSelfTestPhase ~= 2 and checkpointSelfTestPhase ~= 3 and checkpointSelfTestPhase ~= 4) then
 		return
 	end
 
 	local currentFrame = spGetGameFrame()
 	local targetFrame = checkpoint_self_test_target_frame()
-	local _, _, paused = spGetGameSpeed()
+	local paused = get_replay_paused()
 
-	if checkpointSelfTestPhase == 2 and currentFrame <= targetFrame + 1 and paused then
+	if checkpointSelfTestPhase == 3 then
+		if os.clock() - checkpointSelfTestRequestClock < checkpointSelfTestPrepareDelaySeconds then
+			return
+		end
+
+		checkpointSelfTestRequestFrame = currentFrame
+		checkpointSelfTestRequestClock = os.clock()
+		if spSetConfigInt then
+			spSetConfigInt("ReplayCheckpointSelfTestRequestFrame", checkpointSelfTestRequestFrame)
+		end
+		checkpoint_self_test_set_phase(2)
+		Spring.Echo(
+			"[ReplayCheckpointTest] load current=" .. currentFrame ..
+			" target=" .. targetFrame ..
+			" paused=" .. (checkpointSelfTestPauseBeforeLoad and "1" or "0")
+		)
+		local deferred = request_checkpoint_load(targetFrame, checkpointSelfTestRequestFrame, "checkpoint-self-test")
+		if deferred then
+			checkpoint_self_test_screenshot("preload", currentFrame)
+		end
+		return
+	end
+
+	if checkpointSelfTestPhase == 4 and checkpointSelfTestResumeAfterScreenshots then
+		if checkpoint_self_test_has_pending_screenshots() then
+			return
+		end
+
+		checkpointSelfTestResumeAfterScreenshots = false
+		checkpointSelfTestRequestClock = os.clock()
+		Spring.Echo(
+			"[ReplayCheckpointTest] resume-dispatch current=" .. currentFrame ..
+			" target=" .. targetFrame ..
+			" request=" .. checkpointSelfTestRequestFrame ..
+			" resume=" .. checkpointSelfTestResumeFrame
+		)
+		if checkpointSelfTestPauseBeforeLoad then
+			Spring.SendCommands("pause 0")
+		end
+		return
+	end
+
+	if checkpointSelfTestPhase == 2 and currentFrame <= targetFrame + 1 then
 		local elapsed = os.clock() - checkpointSelfTestRequestClock
 		Spring.Echo(
 			"[ReplayCheckpointTest] restored current=" .. currentFrame ..
 			" target=" .. targetFrame ..
 			" request=" .. checkpointSelfTestRequestFrame ..
-			" paused=1 elapsed=" .. string.format("%.2f", elapsed)
+			" paused=" .. (checkpointSelfTestPauseBeforeLoad and "1" or "0") ..
+			" elapsed=" .. string.format("%.2f", elapsed)
 		)
+		checkpoint_self_test_screenshot("restored", currentFrame)
 		if checkpointSelfTestResumeFrame > targetFrame + 1 then
 			checkpointSelfTestRequestClock = os.clock()
 			checkpoint_self_test_set_phase(4)
@@ -321,7 +1135,18 @@ local function checkpoint_self_test_update()
 				" request=" .. checkpointSelfTestRequestFrame ..
 				" resume=" .. checkpointSelfTestResumeFrame
 			)
-			Spring.SendCommands("pause 0")
+			checkpoint_self_test_screenshot("resume-start", currentFrame)
+			if checkpointSelfTestPauseBeforeLoad then
+				if checkpointSelfTestScreenshots and checkpoint_self_test_has_pending_screenshots() then
+					checkpointSelfTestResumeAfterScreenshots = true
+					Spring.Echo(
+						"[ReplayCheckpointTest] resume-deferred current=" .. currentFrame ..
+						" pending_screenshots=" .. #checkpointSelfTestPendingScreenshots
+					)
+				else
+					Spring.SendCommands("pause 0")
+				end
+			end
 			return
 		end
 		checkpoint_self_test_mark_complete()
@@ -344,6 +1169,209 @@ local function checkpoint_self_test_update()
 	end
 end
 
+local function draw_transition_ring(cx, cy, radius, phase)
+	local segments = 96
+	for i = 0, segments - 1 do
+		local angle = (i / segments) * mathPi * 2 + phase
+		glVertex(cx + mathCos(angle) * radius, cy + mathSin(angle) * radius, 0)
+	end
+end
+
+local function draw_transition_spokes(cx, cy, innerRadius, outerRadius, phase, count)
+	for i = 0, count - 1 do
+		local angle = (i / count) * mathPi * 2 + phase
+		local ca = mathCos(angle)
+		local sa = mathSin(angle)
+		glVertex(cx + ca * innerRadius, cy + sa * innerRadius, 0)
+		glVertex(cx + ca * outerRadius, cy + sa * outerRadius, 0)
+	end
+end
+
+local function draw_transition_shards(cx, cy, base, progress)
+	local count = 18
+	for i = 0, count - 1 do
+		local angle = (i / count) * mathPi * 2 - progress * mathPi * 5
+		local lane = base * (0.18 + (i % 6) * 0.045)
+		local length = base * (0.012 + (i % 4) * 0.005)
+		local ca = mathCos(angle)
+		local sa = mathSin(angle)
+		local x = cx + ca * (lane + progress * base * 0.06)
+		local y = cy + sa * (lane + progress * base * 0.06)
+		glVertex(x - sa * length, y + ca * length, 0)
+		glVertex(x + sa * length, y - ca * length, 0)
+	end
+end
+
+local function draw_transition_text_line(text, x, y, size, red, green, blue, alpha)
+	if not glText then
+		return false
+	end
+
+	local shadow = mathMax(1, mathFloor(2 * ui_scale + 0.5))
+	local colorPrefix = stringChar(
+		255,
+		mathFloor(red * 255 + 0.5),
+		mathFloor(green * 255 + 0.5),
+		mathFloor(blue * 255 + 0.5)
+	)
+	glColor(1, 1, 1, mathMin(1, alpha))
+	glText("\255\000\000\000" .. text, x + shadow, y - shadow, size, "co")
+	glText(colorPrefix .. text, x, y, size, "co")
+	return true
+end
+
+local function draw_restore_transition()
+	if not transitionEnabled or (transitionUntilMs <= 0 and transitionUntilFrame <= 0) then
+		return
+	end
+
+	local now = now_ms()
+	local currentFrame = spGetGameFrame()
+	local msExpired = transitionUntilMs <= 0 or now >= transitionUntilMs
+	local frameExpired = transitionUntilFrame <= 0 or currentFrame > transitionUntilFrame
+	if msExpired and frameExpired then
+		clear_restore_transition()
+		return
+	end
+
+	local progress
+	if not msExpired and transitionUntilMs > transitionStartMs then
+		local duration = mathMax(1, transitionUntilMs - transitionStartMs)
+		progress = (now - transitionStartMs) / duration
+	elseif not frameExpired and transitionUntilFrame > transitionStartFrame then
+		local duration = mathMax(1, transitionUntilFrame - transitionStartFrame)
+		progress = (currentFrame - transitionStartFrame) / duration
+	else
+		progress = 0
+	end
+	progress = mathMax(0, mathMin(1, progress))
+	local fadeIn = mathMin(1, progress * 5)
+	local fadeOut = mathMin(1, (1 - progress) * 4)
+	local alpha = mathMax(0.35, fadeIn) * fadeOut
+	if alpha <= 0 then
+		return
+	end
+
+	if not transitionDrawLogged then
+		transitionDrawLogged = true
+		set_config_int("ReplayCheckpointTransitionDrawLogged", 1)
+		Spring.Echo(
+			"[ReplayCheckpointTransition] draw target=" .. transitionTargetFrame ..
+			" request=" .. transitionRequestFrame ..
+			" frame=" .. currentFrame
+		)
+	end
+
+	local cx = vsx * 0.5
+	local cy = vsy * 0.5
+	local base = mathMin(vsx, vsy)
+	local pulse = mathSin(progress * mathPi * 8)
+	local frameDelta = transitionTargetFrame - transitionRequestFrame
+	local direction = "FORWARD"
+	if frameDelta < 0 then
+		direction = "REWIND"
+	elseif frameDelta == 0 then
+		direction = "CHECKPOINT"
+	end
+	local deltaText = direction .. " " .. (frameDelta >= 0 and "+" or "-") .. mathAbs(frameDelta) .. "f"
+
+	glBlending(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+	glColor(0.01, 0.025, 0.045, 0.46 * alpha)
+	glRect(0, 0, vsx, vsy)
+
+	for i = 0, 8 do
+		local y = ((i / 8) * vsy) + (mathSin(progress * mathPi * 4 + i) * base * 0.006)
+		local bandAlpha = (0.05 + (i % 2) * 0.035) * alpha
+		glColor(0.28, 0.95, 1.0, bandAlpha)
+		glRect(vsx * 0.16, y, vsx * 0.84, y + mathMax(1, base * 0.002))
+	end
+
+	glBlending(GL_SRC_ALPHA, GL_ONE)
+	glColor(0.50, 0.94, 1.0, 0.30 * alpha)
+	glLineWidth(mathMax(1, mathFloor(2 * ui_scale + 0.5)))
+	glBeginEnd(GL_LINES, draw_transition_shards, cx, cy, base, progress)
+
+	for i = 1, 4 do
+		local radius = base * (0.11 + i * 0.06 + progress * 0.10)
+		local ringAlpha = (0.32 - i * 0.035) * alpha
+		glColor(0.20, 0.82, 1.0, ringAlpha)
+		glLineWidth(mathMax(1, mathFloor((4 - i) * ui_scale + 0.5)))
+		glBeginEnd(GL_LINE_LOOP, draw_transition_ring, cx, cy, radius, progress * mathPi * (i + 1))
+	end
+
+	glColor(0.70, 0.96, 1.0, 0.36 * alpha)
+	glLineWidth(mathMax(1, mathFloor(2 * ui_scale + 0.5)))
+	glBeginEnd(GL_LINES, draw_transition_spokes, cx, cy, base * 0.135, base * (0.25 + pulse * 0.012), progress * mathPi * 2, 24)
+
+	glColor(1.0, 0.74, 0.24, 0.30 * alpha)
+	glLineWidth(1.0)
+	glBeginEnd(GL_LINES, draw_transition_spokes, cx, cy, base * 0.285, base * 0.325, -progress * mathPi * 3, 36)
+
+	glColor(1.0, 0.72, 0.24, 0.34 * alpha)
+	glLineWidth(mathMax(1, mathFloor(2 * ui_scale + 0.5)))
+	glBeginEnd(GL_LINE_LOOP, draw_transition_ring, cx, cy, base * (0.22 + pulse * 0.01), -progress * mathPi * 5)
+	glLineWidth(1.0)
+	glBlending(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+	local panelW = mathMax(base * 0.48, 420 * ui_scale)
+	local panelH = mathMax(base * 0.135, 118 * ui_scale)
+	glColor(0.02, 0.035, 0.055, 0.84 * alpha)
+	glRect(cx - panelW * 0.5, cy - panelH * 0.5, cx + panelW * 0.5, cy + panelH * 0.5)
+	glColor(0.06, 0.30, 0.42, 0.54 * alpha)
+	glRect(cx - panelW * 0.48, cy - panelH * 0.16, cx + panelW * 0.48, cy + panelH * 0.16)
+	glColor(0.22, 0.86, 1.0, 0.42 * alpha)
+	glRect(cx - panelW * 0.5, cy + panelH * 0.5 - mathMax(2, 3 * ui_scale), cx + panelW * 0.5, cy + panelH * 0.5)
+	glColor(1.0, 0.72, 0.24, 0.38 * alpha)
+	glRect(cx - panelW * 0.5, cy - panelH * 0.5, cx + panelW * 0.5, cy - panelH * 0.5 + mathMax(2, 3 * ui_scale))
+
+	if not draw_transition_text_line(
+		"TIME MACHINE ONLINE",
+		cx,
+		cy + panelH * 0.25,
+		mathFloor(25 * ui_scale + 0.5),
+		0.90,
+		0.98,
+		1.0,
+		0.98 * alpha
+	) and font then
+		font:Begin()
+		font:SetTextColor(0.80, 0.96, 1.0, 0.96 * alpha)
+		font:SetOutlineColor(0, 0, 0, 0.82 * alpha)
+		font:Print("TIME MACHINE ONLINE", cx, cy + panelH * 0.24, mathFloor(21 * ui_scale + 0.5), "co")
+		font:End()
+	end
+	if glText then
+		draw_transition_text_line(deltaText, cx, cy - panelH * 0.02, mathFloor(18 * ui_scale + 0.5), 0.66, 0.97, 1.0, 0.96 * alpha)
+		draw_transition_text_line(
+			"RESTORING " .. transitionTargetFrame .. "  FROM " .. transitionRequestFrame,
+			cx,
+			cy - panelH * 0.30,
+			mathFloor(15 * ui_scale + 0.5),
+			1.0,
+			0.86,
+			0.34,
+			0.98 * alpha
+		)
+	elseif font then
+		font:Begin()
+		font:SetTextColor(0.62, 0.94, 1.0, 0.92 * alpha)
+		font:SetOutlineColor(0, 0, 0, 0.82 * alpha)
+		font:Print(deltaText, cx, cy - panelH * 0.02, mathFloor(16 * ui_scale + 0.5), "co")
+		font:SetTextColor(1.0, 0.84, 0.42, 0.94 * alpha)
+		font:Print(
+			"RESTORING " .. transitionTargetFrame .. "  FROM " .. transitionRequestFrame,
+			cx,
+			cy - panelH * 0.30,
+			mathFloor(14 * ui_scale + 0.5),
+			"co"
+		)
+		font:End()
+	end
+
+	glColor(1, 1, 1, 1)
+	glBlending(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+end
+
 local function draw_timeline()
 	update_replay_length()
 	if replayLengthFrames <= 0 then
@@ -355,6 +1383,7 @@ local function draw_timeline()
 	local x1, y1, x2, y2 = timeline_rect_pixels()
 	local fillX = mathFloor(x1 + (x2 - x1) * progress + 0.5)
 	local markerW = math.max(2, mathFloor(2 * ui_scale + 0.5))
+	refresh_replay_checkpoint_frames(currentFrame)
 
 	glColor(0, 0, 0, ui_opacity * 0.78)
 	glRect(x1 - bgpadding, y1 - bgpadding, x2 + bgpadding, y2 + bgpadding)
@@ -362,6 +1391,22 @@ local function draw_timeline()
 	glRect(x1, y1, x2, y2)
 	glColor(0.20, 0.72, 0.92, 0.88)
 	glRect(x1, y1, fillX, y2)
+	if replayCheckpointFramesLoaded then
+		local tickW = mathMax(1, mathFloor(2 * ui_scale + 0.5))
+		for i = 1, #replayCheckpointFrames do
+			local frame = replayCheckpointFrames[i]
+			if frame >= 0 and frame <= replayLengthFrames then
+				local tickX = mathFloor(x1 + ((x2 - x1) * frame / replayLengthFrames) + 0.5)
+				local passed = frame <= currentFrame
+				if passed then
+					glColor(0.86, 0.92, 1.0, 0.56)
+				else
+					glColor(1.0, 0.72, 0.24, 0.64)
+				end
+				glRect(tickX - tickW, y1 - bgpadding * 0.45, tickX + tickW, y2 + bgpadding * 0.45)
+			end
+		end
+	end
 	glColor(1, 1, 1, 0.9)
 	glRect(fillX - markerW, y1 - bgpadding * 0.25, fillX + markerW, y2 + bgpadding * 0.25)
 	glColor(1, 1, 1, 1)
@@ -434,10 +1479,18 @@ end
 
 function widget:DrawScreen()
 	glBlending(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+	draw_restore_transition()
+	note_checkpoint_load_draw()
+	update_paused_timeline_catchup()
+	timeline_self_test_update_paused_jump()
 	if not isActive then
 		if WG['guishader'] and prevIsActive ~= isActive then
 			WG['guishader'].RemoveDlist('replaybuttons')
 		end
+		timeline_self_test_capture_pending_screenshots()
+		checkpoint_self_test_capture_pending_screenshots()
+		timeline_self_test_resume_after_reached()
+		timeline_self_test_finish_deferred_quit()
 		return
 	end
 
@@ -486,9 +1539,13 @@ function widget:DrawScreen()
 		end
 	end
 	font:End()
+	timeline_self_test_capture_pending_screenshots()
+	checkpoint_self_test_capture_pending_screenshots()
+	timeline_self_test_resume_after_reached()
+	timeline_self_test_finish_deferred_quit()
 end
 
-function widget:MousePress(x, y, button)
+function widget:MousePress(x, y, button, source)
 	if not isActive then
 		return
 	end
@@ -496,7 +1553,7 @@ function widget:MousePress(x, y, button)
 	if button == 1 then
 		local x1, y1, x2, y2 = timeline_rect_pixels()
 		if point_in_rect(x1, y1, x2, y2, x, y) then
-			jump_to_frame(frame_from_timeline_x(x))
+			jump_to_frame(frame_from_timeline_x(x), source)
 			return true
 		end
 	end
@@ -504,9 +1561,8 @@ function widget:MousePress(x, y, button)
 	local cb, i = clicked_button(buttons)
 	if cb == "playpauseskip" then
 		if spGetGameFrame() > 1 then
-			isPaused = not isPaused
-			Spring.SendCommands('pause '..(isPaused and '1' or '0'))
-			buttons[i].text = (isPaused and '  >>' or '  ||')
+			local nextPaused = not isPaused
+			set_replay_pause_from_button(nextPaused)
 		else
 			Spring.SendCommands("skip 1")
 			buttons[i].text = "  ||"
@@ -524,6 +1580,11 @@ function widget:Update(dt)
 	prevIsActive = isActive
 	isActive = #Spring.GetSelectedUnits() == 0
 	checkpoint_self_test_update()
+	update_pending_checkpoint_load()
+	update_paused_timeline_catchup()
+	timeline_self_test_update_paused_jump()
+	timeline_self_test_resume_after_reached()
+	timeline_self_test_finish_deferred_quit()
 end
 
 function widget:GameFrame(frame)
@@ -534,55 +1595,78 @@ function widget:GameFrame(frame)
 	if not selfTestEnabled or selfTestComplete then
 		return
 	end
+	if timelineSelfTestQuitAfterScreenshots then
+		return
+	end
 
 	if not selfTestTriggered and frame >= selfTestStartFrame then
 		local targetFrame = self_test_target_frame(frame)
-		if targetFrame <= frame + 1 then
-			Spring.Echo("[ReplayTimelineTest] failed current=" .. frame .. " target=" .. targetFrame .. " reason=no-forward-target")
-			selfTestReached = true
-			selfTestComplete = true
-			if selfTestQuit then
-				Spring.SendCommands("quitforce")
-			end
+		local useCheckpoint = checkpointTimelineJumps and selfTestUseCheckpoint
+		if targetFrame <= frame + 1 and not useCheckpoint then
+			timeline_self_test_fail(frame, targetFrame, "no-forward-target")
 			return
 		end
+		if selfTestViaTimelineClick then
+			local _, _, clickFrame = timeline_click_point_for_frame(targetFrame)
+			targetFrame = clickFrame
+			if targetFrame <= 0 then
+				timeline_self_test_fail(frame, targetFrame, "timeline-click-target")
+				return
+			end
+		end
 
-		selfTestTriggered = true
-		selfTestTargetFrame = targetFrame
-		selfTestDeadlineFrame = targetFrame + 300
-		Spring.Echo("[ReplayTimelineTest] start current=" .. frame .. " target=" .. targetFrame .. " length=" .. replayLengthFrames)
-		jump_to_frame(targetFrame, "self-test")
+		timeline_self_test_set_target(targetFrame, mathMax(frame, targetFrame) + 300)
+		timeline_self_test_set_phase(1)
+		local paused = get_replay_paused()
+		Spring.Echo(
+			"[ReplayTimelineTest] start current=" .. frame ..
+			" target=" .. targetFrame ..
+			" length=" .. replayLengthFrames ..
+			" paused=" .. (paused and "1" or "0")
+		)
+		if selfTestPauseBeforeJump then
+			if selfTestPauseViaButton then
+				set_replay_pause_from_button(true)
+			else
+				set_pause_button_state(true)
+				set_replay_paused(true, "self-test-before-jump")
+			end
+			timelineSelfTestPendingJump = true
+			timelineSelfTestRequestClock = os.clock()
+			Spring.Echo(
+				"[ReplayTimelineTest] pause-request current=" .. frame ..
+				" target=" .. targetFrame ..
+				" via_button=" .. (selfTestPauseViaButton and "1" or "0")
+			)
+			return
+		end
+		timeline_self_test_dispatch_jump(frame, targetFrame)
 		return
 	end
 
 	if selfTestTriggered and not selfTestReached and frame >= selfTestTargetFrame and selfTestTargetFrame > 0 then
-		selfTestReached = true
-		Spring.Echo("[ReplayTimelineTest] reached current=" .. frame .. " target=" .. selfTestTargetFrame)
-		if selfTestQuit and (selfTestQuitFrame <= frame or selfTestQuitFrame <= 0) then
-			selfTestComplete = true
-			Spring.SendCommands("quitforce")
-		elseif selfTestQuit then
-			Spring.Echo("[ReplayTimelineTest] continue current=" .. frame .. " target=" .. selfTestTargetFrame .. " quit_frame=" .. selfTestQuitFrame)
-		else
-			selfTestComplete = true
+		-- Backward paused self-tests start past the target; do not count the
+		-- pre-dispatch frame as reached before the timeline click actually runs.
+		if timelineSelfTestPendingJump then
+			return
 		end
+		if timeline_paused_catchup_blocks_reached() then
+			return
+		end
+		local paused = get_replay_paused()
+		timeline_self_test_mark_reached(frame, paused)
 		return
 	end
 
 	if selfTestReached and selfTestQuit and selfTestQuitFrame > 0 and frame >= selfTestQuitFrame then
-		selfTestComplete = true
 		Spring.Echo("[ReplayTimelineTest] post-target current=" .. frame .. " target=" .. selfTestTargetFrame .. " quit_frame=" .. selfTestQuitFrame)
-		Spring.SendCommands("quitforce")
+		timeline_self_test_screenshot("post-target", frame, true)
+		timeline_self_test_quit_or_defer()
 		return
 	end
 
-	if selfTestTriggered and selfTestDeadlineFrame > 0 and frame > selfTestDeadlineFrame then
-		selfTestReached = true
-		selfTestComplete = true
-		Spring.Echo("[ReplayTimelineTest] failed current=" .. frame .. " target=" .. selfTestTargetFrame .. " reason=deadline")
-		if selfTestQuit then
-			Spring.SendCommands("quitforce")
-		end
+	if selfTestTriggered and not selfTestReached and not timeline_paused_catchup_blocks_reached() and selfTestDeadlineFrame > 0 and frame > selfTestDeadlineFrame then
+		timeline_self_test_fail(frame, selfTestTargetFrame, "deadline")
 	end
 end
 

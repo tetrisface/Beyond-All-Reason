@@ -22,6 +22,7 @@ local round = math.round
 
 -- Localized Spring API for performance
 local spGetGameFrame = Spring.GetGameFrame
+local spGetConfigInt = Spring.GetConfigInt
 local spEcho = Spring.Echo
 
 -- Notes and TODO
@@ -1875,6 +1876,25 @@ end
 
 local pendingRestore = nil  -- Holds saved decal data between SetConfigData and Initialize
 
+local function replay_checkpoint_visual_cleanup_active(curFrame)
+	if spGetConfigInt("ReplayCheckpointVisualCleanup", 1) ~= 1 then
+		return false
+	end
+
+	local restoreSerial = spGetConfigInt("ReplayCheckpointRestoreSerial", 0)
+	if restoreSerial <= 0 then
+		return false
+	end
+
+	local restoreFrame = spGetConfigInt("ReplayCheckpointRestoreFrame", -1)
+	local cleanupUntilFrame = spGetConfigInt("ReplayCheckpointVisualCleanupUntilFrame", restoreFrame + 5)
+	if restoreFrame < 0 or curFrame < restoreFrame then
+		return false
+	end
+
+	return curFrame <= cleanupUntilFrame, restoreSerial, restoreFrame, cleanupUntilFrame
+end
+
 function widget:Initialize()
 	--if makeAtlases() == false then
 	--	goodbye("Failed to init texture atlas for DecalsGL4")
@@ -1930,76 +1950,85 @@ function widget:Initialize()
 	-- Restore saved decals from a previous luaui reload (skip if game just started)
 	if pendingRestore and pendingRestore.decals then
 		local curFrame = spGetGameFrame()
-		if curFrame > 0 then
-		local restoredCount = 0
-		local frameOffset = curFrame - (pendingRestore.saveFrame or 0)
-		for _, entry in ipairs(pendingRestore.decals) do
-			local step = #entry
-			-- Support compact 13-field format and legacy 20-field format
-			local vboEntry
-			if step == 13 then
-				-- Compact: reconstruct full 20-float VBO entry
-				local posx, posz = entry[11], entry[12]
-				local posy = Spring.GetGroundHeight(posx, posz) or 0
-				vboEntry = {
-					entry[1],  entry[2],  entry[3],  entry[4],   -- length, width, rotation, maxalpha
-					entry[5],  entry[6],  entry[7],  entry[8],   -- UV p,q,s,t
-					entry[9],  entry[10], 0,         0,           -- alphastart, alphadecay, heatstart=0, heatdecay=0
-					posx,      posy,      posz,      entry[13],   -- posx, posy, posz, spawnframe
-					0.5,       0,         0,         0,           -- bwfactor=0.5, glowsustain=0, glowadd=0, fadeintime=0
-				}
-			elseif step == 20 then
-				vboEntry = entry
-			end
-			if vboEntry then
-				-- Adjust spawnframe by the elapsed time between save and restore
-				vboEntry[16] = vboEntry[16] + frameOffset
+		local cleanupActive, restoreSerial, restoreFrame, cleanupUntilFrame = replay_checkpoint_visual_cleanup_active(curFrame)
+		if cleanupActive then
+			spEcho(string.format(
+				"[DecalsGL4] Skipped %d saved decals after replay checkpoint restore serial %d at frame %d until frame %d",
+				#pendingRestore.decals,
+				restoreSerial,
+				restoreFrame,
+				cleanupUntilFrame
+			))
+		elseif curFrame > 0 then
+			local restoredCount = 0
+			local frameOffset = curFrame - (pendingRestore.saveFrame or 0)
+			for _, entry in ipairs(pendingRestore.decals) do
+				local step = #entry
+				-- Support compact 13-field format and legacy 20-field format
+				local vboEntry
+				if step == 13 then
+					-- Compact: reconstruct full 20-float VBO entry
+					local posx, posz = entry[11], entry[12]
+					local posy = Spring.GetGroundHeight(posx, posz) or 0
+					vboEntry = {
+						entry[1],  entry[2],  entry[3],  entry[4],   -- length, width, rotation, maxalpha
+						entry[5],  entry[6],  entry[7],  entry[8],   -- UV p,q,s,t
+						entry[9],  entry[10], 0,         0,           -- alphastart, alphadecay, heatstart=0, heatdecay=0
+						posx,      posy,      posz,      entry[13],   -- posx, posy, posz, spawnframe
+						0.5,       0,         0,         0,           -- bwfactor=0.5, glowsustain=0, glowadd=0, fadeintime=0
+					}
+				elseif step == 20 then
+					vboEntry = entry
+				end
+				if vboEntry then
+					-- Adjust spawnframe by the elapsed time between save and restore
+					vboEntry[16] = vboEntry[16] + frameOffset
 
-				local alphastart = vboEntry[9]
-				local alphadecay = vboEntry[10]
-				if alphadecay > 0 then
-					local age = curFrame - vboEntry[16]
-					local alpha = alphastart - alphadecay * age
-					if alpha > 0 then
-						local lifetime = mathFloor(alphastart / alphadecay)
-						decalIndex = decalIndex + 1
+					local alphastart = vboEntry[9]
+					local alphadecay = vboEntry[10]
+					if alphadecay > 0 then
+						local age = curFrame - vboEntry[16]
+						local alpha = alphastart - alphadecay * age
+						if alpha > 0 then
+							local lifetime = mathFloor(alphastart / alphadecay)
+							decalIndex = decalIndex + 1
 
-						local length_v = vboEntry[1]
-						local width_v = vboEntry[2]
-						local targetVBO = decalVBO
-						if mathMin(width_v, length_v) > extralargesizeThreshold then
-							targetVBO = decalExtraLargeVBO
-						elseif mathMin(width_v, length_v) > largesizethreshold then
-							targetVBO = decalLargeVBO
+							local length_v = vboEntry[1]
+							local width_v = vboEntry[2]
+							local targetVBO = decalVBO
+							if mathMin(width_v, length_v) > extralargesizeThreshold then
+								targetVBO = decalExtraLargeVBO
+							elseif mathMin(width_v, length_v) > largesizethreshold then
+								targetVBO = decalLargeVBO
+							end
+
+							pushElementInstance(targetVBO, vboEntry, decalIndex, true, true)
+
+							local deathtime = vboEntry[16] + lifetime
+							if decalRemoveQueue[deathtime] == nil then
+								decalRemoveQueue[deathtime] = {decalIndex}
+							else
+								decalRemoveQueue[deathtime][#decalRemoveQueue[deathtime] + 1] = decalIndex
+							end
+
+							local posx = vboEntry[13]
+							local posz = vboEntry[15]
+							local rotation = vboEntry[3]
+							local p, q2, s, t = vboEntry[5], vboEntry[6], vboEntry[7], vboEntry[8]
+							AddDecalToArea(decalIndex, posx, posz, width_v, length_v)
+							restoredCount = restoredCount + 1
 						end
-
-						pushElementInstance(targetVBO, vboEntry, decalIndex, true, true)
-
-						local deathtime = vboEntry[16] + lifetime
-						if decalRemoveQueue[deathtime] == nil then
-							decalRemoveQueue[deathtime] = {decalIndex}
-						else
-							decalRemoveQueue[deathtime][#decalRemoveQueue[deathtime] + 1] = decalIndex
-						end
-
-						local posx = vboEntry[13]
-						local posz = vboEntry[15]
-						local rotation = vboEntry[3]
-						local p, q2, s, t = vboEntry[5], vboEntry[6], vboEntry[7], vboEntry[8]
-						AddDecalToArea(decalIndex, posx, posz, width_v, length_v)
-						restoredCount = restoredCount + 1
 					end
 				end
 			end
+			-- Batch upload all restored decals
+			if decalVBO.dirty then uploadAllElements(decalVBO) end
+			if decalLargeVBO.dirty then uploadAllElements(decalLargeVBO) end
+			if decalExtraLargeVBO.dirty then uploadAllElements(decalExtraLargeVBO) end
+			if restoredCount > 0 then
+				spEcho(string.format("[DecalsGL4] Restored %d decals from previous session", restoredCount))
+			end
 		end
-		-- Batch upload all restored decals
-		if decalVBO.dirty then uploadAllElements(decalVBO) end
-		if decalLargeVBO.dirty then uploadAllElements(decalLargeVBO) end
-		if decalExtraLargeVBO.dirty then uploadAllElements(decalExtraLargeVBO) end
-		if restoredCount > 0 then
-			spEcho(string.format("[DecalsGL4] Restored %d decals from previous session", restoredCount))
-		end
-		end -- curFrame > 0
 		pendingRestore = nil
 	end
 

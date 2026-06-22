@@ -20,12 +20,17 @@ end
 -- Localized functions for performance
 local mathMax = math.max
 local stringFind = string.find
+local stringFormat = string.format
+local tableConcat = table.concat
+local tableSort = table.sort
 
 -- Localized Spring API for performance
 local spEcho = Spring.Echo
 local spGetViewGeometry = Spring.GetViewGeometry
 local spIsGUIHidden = Spring.IsGUIHidden
 local spGetConfigFloat = Spring.GetConfigFloat
+local spGetConfigInt = Spring.GetConfigInt
+local spGetGameFrame = Spring.GetGameFrame
 
 local uiOpacity = Spring.GetConfigFloat("ui_opacity", 0.7)
 local uiOpacityCheckFrame = 0
@@ -71,6 +76,7 @@ local guishaderScreenRects = {}
 local guishaderScreenDlists = {}
 local updateStencilTexture = false
 local updateStencilTextureScreen = false
+local replayCheckpointCleanupSerial = 0
 
 local oldvs = 0
 local vsx, vsy, vpx, vpy = spGetViewGeometry()
@@ -80,6 +86,98 @@ local extraBlurPasses = 0
 -- Cached uniform values
 local cachedIvsx = 0.5 / vsx
 local cachedIvsy = 0.5 / vsy
+
+local function replay_checkpoint_visual_cleanup_active()
+	if spGetConfigInt("ReplayCheckpointVisualCleanup", 1) ~= 1 then
+		return false
+	end
+
+	local restoreSerial = spGetConfigInt("ReplayCheckpointRestoreSerial", 0)
+	if restoreSerial <= 0 then
+		return false
+	end
+
+	local restoreFrame = spGetConfigInt("ReplayCheckpointRestoreFrame", -1)
+	if restoreFrame < 0 then
+		return false
+	end
+
+	local cleanupFrames = spGetConfigInt("ReplayCheckpointGuishaderCleanupFrames", 90)
+	local cleanupUntilFrame = mathMax(
+		spGetConfigInt("ReplayCheckpointVisualCleanupUntilFrame", restoreFrame + cleanupFrames),
+		restoreFrame + cleanupFrames
+	)
+	local curFrame = spGetGameFrame()
+	if curFrame < restoreFrame or curFrame > cleanupUntilFrame then
+		return false
+	end
+
+	return true, restoreSerial, restoreFrame, cleanupUntilFrame
+end
+
+local function clear_replay_checkpoint_guishader_state(restoreSerial, restoreFrame, cleanupUntilFrame)
+	guishaderRects = {}
+	guishaderDlists = {}
+	guishaderScreenRects = {}
+	guishaderScreenDlists = {}
+	screenBlur = false
+	updateStencilTexture = true
+	updateStencilTextureScreen = true
+
+	if replayCheckpointCleanupSerial ~= restoreSerial then
+		replayCheckpointCleanupSerial = restoreSerial
+		spEcho(string.format(
+			"[GUI Shader] Cleared blur state after replay checkpoint restore serial %d at frame %d until frame %d",
+			restoreSerial,
+			restoreFrame,
+			cleanupUntilFrame
+		))
+	end
+end
+
+local function collect_debug_names(items)
+	local names = {}
+	local count = 0
+	for name in pairs(items) do
+		count = count + 1
+		if #names < 12 then
+			names[#names + 1] = tostring(name)
+		end
+	end
+	tableSort(names)
+	return count, tableConcat(names, ",")
+end
+
+local function dump_replay_checkpoint_guishader_state(label)
+	if spGetConfigInt("ReplayCheckpointGuishaderDebug", 0) ~= 1 then
+		return
+	end
+
+	local rectCount, rectNames = collect_debug_names(guishaderRects)
+	local dlistCount, dlistNames = collect_debug_names(guishaderDlists)
+	local screenRectCount, screenRectNames = collect_debug_names(guishaderScreenRects)
+	local screenDlistCount, screenDlistNames = collect_debug_names(guishaderScreenDlists)
+	local renderDlistCount = 0
+	for _ in pairs(renderDlists) do
+		renderDlistCount = renderDlistCount + 1
+	end
+
+	spEcho(stringFormat(
+		"[GUI Shader][ReplayCheckpointDebug] label=%s frame=%d screenBlur=%d renderDlists=%d rects=%d:%s dlists=%d:%s screenRects=%d:%s screenDlists=%d:%s",
+		tostring(label),
+		spGetGameFrame(),
+		screenBlur and 1 or 0,
+		renderDlistCount,
+		rectCount,
+		rectNames,
+		dlistCount,
+		dlistNames,
+		screenRectCount,
+		screenRectNames,
+		screenDlistCount,
+		screenDlistNames
+	))
+end
 
 function widget:ViewResize(_, _)
 	vsx, vsy, vpx, vpy = spGetViewGeometry()
@@ -374,6 +472,12 @@ function widget:DrawScreenEffects() -- This blurs the world underneath UI elemen
 		return
 	end
 
+	local cleanupActive, restoreSerial, restoreFrame, cleanupUntilFrame = replay_checkpoint_visual_cleanup_active()
+	if cleanupActive then
+		clear_replay_checkpoint_guishader_state(restoreSerial, restoreFrame, cleanupUntilFrame)
+		return
+	end
+
 	if not screenBlur and blurShader then
 		if not next(guishaderRects) and not next(guishaderDlists) then
 			return
@@ -430,6 +534,12 @@ end
 
 local function DrawScreen() -- This blurs the UI elements obscured by other UI elements (only unit stats so far!)
 	if spIsGUIHidden() then
+		return
+	end
+
+	local cleanupActive, restoreSerial, restoreFrame, cleanupUntilFrame = replay_checkpoint_visual_cleanup_active()
+	if cleanupActive then
+		clear_replay_checkpoint_guishader_state(restoreSerial, restoreFrame, cleanupUntilFrame)
 		return
 	end
 
@@ -592,6 +702,8 @@ function widget:Initialize()
 			renderDlists[value] = nil
 		end
 	end
+
+	WG['guishader'].ReplayCheckpointDebugDump = dump_replay_checkpoint_guishader_state
 
 	WG.guishader.DrawScreen = DrawScreen	-- widgethandler wont call DrawScreen when chobby interface is shown, but it will call this one as exception
 

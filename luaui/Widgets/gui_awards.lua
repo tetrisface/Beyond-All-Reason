@@ -19,6 +19,8 @@ local tableInsert = table.insert
 
 -- Localized Spring API for performance
 local spGetViewGeometry = Spring.GetViewGeometry
+local spGetConfigInt = Spring.GetConfigInt
+local spIsReplay = Spring.IsReplay
 
 local glCallList = gl.CallList
 
@@ -46,6 +48,7 @@ local OtherAwards
 local chobbyLoaded = (Spring.GetMenuName and string.find(string.lower(Spring.GetMenuName()), 'chobby') ~= nil)
 
 local white = "\255" .. string.char(251) .. string.char(251) .. string.char(251)
+local suppressReplayTimelineAwards = spIsReplay() and spGetConfigInt("ReplayTimelineSuppressEndAwards", 0) == 1
 
 local playerListByTeam = {} -- does not contain specs
 
@@ -54,6 +57,12 @@ local font, font2, titleFont
 local viewScreenX, viewScreenY = spGetViewGeometry()
 
 local UiElement
+
+local function removeGuishaderAwardRect()
+	if WG['guishader'] then
+		WG['guishader'].RemoveRect('awards')
+	end
+end
 
 local function colourNames(teamID)
 	if teamID < 0 then
@@ -230,7 +239,17 @@ function widget:ViewResize(viewSizeX, viewSizeY)
 end
 
 local function ProcessAwards(awards)
-	if not awards then return end
+	if suppressReplayTimelineAwards then
+		drawAwards = false
+		removeGuishaderAwardRect()
+		Spring.SendCommands('endgraph 0')
+		return
+	end
+	if not awards then
+		drawAwards = false
+		removeGuishaderAwardRect()
+		return
+	end
 	WG.awards = awards
 	local traitorWinner = awards.traitor[1]
 	local cowAwardWinner = awards.goldenCow[1].teamID
@@ -331,6 +350,7 @@ end
 
 function widget:DrawScreen()
 	if not drawAwards then
+		removeGuishaderAwardRect()
 		return
 	end
 
@@ -403,7 +423,11 @@ function widget:LanguageChanged()
 end
 
 function widget:Initialize()
-	Spring.SendCommands('endgraph 2')
+	if suppressReplayTimelineAwards then
+		Spring.SendCommands('endgraph 0')
+	else
+		Spring.SendCommands('endgraph 2')
+	end
 
 	widget:ViewResize(viewScreenX, viewScreenY)
 	widgetHandler:RegisterGlobal('GadgetReceiveAwards', ProcessAwards)
@@ -432,6 +456,6 @@ function widget:Shutdown()
 		gl.DeleteList(Background)
 	end
 	if WG['guishader'] then
-		WG['guishader'].RemoveRect('awards')
+		removeGuishaderAwardRect()
 	end
 end

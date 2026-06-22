@@ -16,6 +16,7 @@ end
 -- Localized Spring API
 --------------------------------------------------------------------------------
 local spGetGameFrame  = Spring.GetGameFrame
+local spGetConfigInt  = Spring.GetConfigInt
 local spGetUnitStates = Spring.GetUnitStates
 local spValidUnitID   = Spring.ValidUnitID
 local spGetUnitIsDead = Spring.GetUnitIsDead
@@ -63,9 +64,50 @@ local visibleUnits    = {}
 local crashingUnits   = {} -- unitIDs currently crashing; skip icon for these
 local chobbyInterface = false
 local unitRepeat      = {} -- [unitID] = cached repeat bool; avoids GetUnitStates every frame
+local pendingVisibleUnitsRefresh = false
 
 -- Pre-allocated and reused for every pushElementInstance call to avoid per-push table allocation
 local instanceData = {0, 0, 0, 0,  0,  4,  0, 0, 0.85, 0,  0, 1, 0, 1,  0, 0, 0, 0}
+
+local function isLiveUnit(unitID)
+	return spValidUnitID(unitID) and not spGetUnitIsDead(unitID)
+end
+
+local function forgetUnit(unitID)
+	visibleUnits[unitID] = nil
+	unitRepeat[unitID] = nil
+	crashingUnits[unitID] = nil
+end
+
+local function clearUnit(unitID)
+	forgetUnit(unitID)
+	if repeatVBO and repeatVBO.instanceIDtoIndex[unitID] then
+		popElementInstance(repeatVBO, unitID, true)
+	end
+end
+
+local lastRestoreCleanupSerial = 0
+local function replayCheckpointCleanupActive()
+	local cleanupEnabled = spGetConfigInt("ReplayCheckpointVisualCleanup", 1)
+	if cleanupEnabled == 0 then return false end
+	local restoreSerial = spGetConfigInt("ReplayCheckpointRestoreSerial", 0)
+	if restoreSerial <= 0 then return false end
+	local restoreFrame = spGetConfigInt("ReplayCheckpointRestoreFrame", -1)
+	if restoreFrame < 0 then return false end
+	local curFrame = spGetGameFrame()
+	if curFrame < restoreFrame then return false end
+	local cleanupUntilFrame = spGetConfigInt("ReplayCheckpointVisualCleanupUntilFrame", -1)
+	if cleanupUntilFrame < curFrame then return false end
+	if restoreSerial ~= lastRestoreCleanupSerial then
+		lastRestoreCleanupSerial = restoreSerial
+		InstanceVBOTable.clearInstanceTable(repeatVBO)
+		if repeatVBO.dirty then uploadAllElements(repeatVBO) end
+		visibleUnits = {}
+		unitRepeat = {}
+		crashingUnits = {}
+	end
+	return true
+end
 
 --------------------------------------------------------------------------------
 -- GL4 Initialization
@@ -102,7 +144,7 @@ end
 --------------------------------------------------------------------------------
 local function pushToVBO(unitID, unitDefID, gf)
 	if repeatVBO.instanceIDtoIndex[unitID] then return end
-	if not spValidUnitID(unitID) or spGetUnitIsDead(unitID) then return end
+	if not isLiveUnit(unitID) then return end
 	local conf = unitConf[unitDefID]
 	if not conf then return end -- unit can't receive repeatable orders, skip
 	instanceData[1] = conf[1]  -- width
@@ -130,18 +172,25 @@ function widget:Initialize()
 end
 
 function widget:VisibleUnitsChanged(extVisibleUnits, extNumVisibleUnits)
+	if replayCheckpointCleanupActive() then
+		pendingVisibleUnitsRefresh = true
+		return
+	end
+	pendingVisibleUnitsRefresh = false
 	InstanceVBOTable.clearInstanceTable(repeatVBO)
 	visibleUnits = {}
 	unitRepeat = {}
 	local gf = spGetGameFrame()
 	for unitID, unitDefID in pairs(extVisibleUnits) do
-		visibleUnits[unitID] = unitDefID
-		if not crashingUnits[unitID] then
-			local states = spGetUnitStates(unitID)
-			if states then
-				local rep = states["repeat"]
-				unitRepeat[unitID] = rep
-				if rep then pushToVBO(unitID, unitDefID, gf) end
+		if isLiveUnit(unitID) then
+			visibleUnits[unitID] = unitDefID
+			if not crashingUnits[unitID] then
+				local states = spGetUnitStates(unitID)
+				if states then
+					local rep = states["repeat"]
+					unitRepeat[unitID] = rep
+					if rep then pushToVBO(unitID, unitDefID, gf) end
+				end
 			end
 		end
 	end
@@ -149,6 +198,15 @@ function widget:VisibleUnitsChanged(extVisibleUnits, extNumVisibleUnits)
 end
 
 function widget:VisibleUnitAdded(unitID, unitDefID, unitTeam)
+	if replayCheckpointCleanupActive() then
+		pendingVisibleUnitsRefresh = true
+		return
+	end
+	if not isLiveUnit(unitID) then
+		forgetUnit(unitID)
+		return
+	end
+
 	visibleUnits[unitID] = unitDefID
 	if crashingUnits[unitID] then return end
 	local states = spGetUnitStates(unitID)
@@ -162,6 +220,10 @@ function widget:VisibleUnitAdded(unitID, unitDefID, unitTeam)
 end
 
 function widget:VisibleUnitRemoved(unitID)
+	if replayCheckpointCleanupActive() then
+		pendingVisibleUnitsRefresh = true
+		return
+	end
 	visibleUnits[unitID] = nil
 	unitRepeat[unitID] = nil
 	crashingUnits[unitID] = nil
@@ -171,6 +233,10 @@ function widget:VisibleUnitRemoved(unitID)
 end
 
 function widget:CrashingAircraft(unitID, unitDefID, teamID)
+	if replayCheckpointCleanupActive() then
+		pendingVisibleUnitsRefresh = true
+		return
+	end
 	crashingUnits[unitID] = true
 	unitRepeat[unitID] = nil
 	if repeatVBO.instanceIDtoIndex[unitID] then
@@ -179,9 +245,18 @@ function widget:CrashingAircraft(unitID, unitDefID, teamID)
 end
 
 function widget:UnitCommand(unitID, unitDefID, teamID, cmdID, cmdParams, cmdOpts)
+	if replayCheckpointCleanupActive() then
+		pendingVisibleUnitsRefresh = true
+		return
+	end
+	if not isLiveUnit(unitID) then
+		forgetUnit(unitID)
+		return
+	end
+
 	if cmdID ~= CMD.REPEAT then return end
 	if not visibleUnits[unitID] or crashingUnits[unitID] then return end
-	local rep = (cmdParams[1] == 1)
+	local rep = cmdParams and (cmdParams[1] == 1)
 	if unitRepeat[unitID] == rep then return end
 	unitRepeat[unitID] = rep
 	if rep then
@@ -192,6 +267,14 @@ function widget:UnitCommand(unitID, unitDefID, teamID, cmdID, cmdParams, cmdOpts
 		end
 	end
 	if repeatVBO.dirty then uploadAllElements(repeatVBO) end
+end
+
+function widget:Update(dt)
+	if not pendingVisibleUnitsRefresh then return end
+	if replayCheckpointCleanupActive() then return end
+	if WG['unittrackerapi'] and WG['unittrackerapi'].visibleUnits then
+		widget:VisibleUnitsChanged(WG['unittrackerapi'].visibleUnits, nil)
+	end
 end
 
 function widget:RecvLuaMsg(msg, playerID)
